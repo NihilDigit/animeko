@@ -26,6 +26,15 @@
     <string name="settings_tab_danmaku">Server Region</string>
     <string name="settings_tab_proxy">Proxy</string>
     <string name="settings_tab_bt">BitTorrent</string>
+    <string name="settings_tab_pikpak">PikPak</string>
+    <string name="settings_pikpak_title">PikPak offline download</string>
+    <string name="settings_pikpak_description">Submit magnets to PikPak\'s cloud, then stream the result over HTTPS. Use when local BT is blocked.</string>
+    <string name="settings_pikpak_enabled">Enable PikPak</string>
+    <string name="settings_pikpak_username">Username</string>
+    <string name="settings_pikpak_username_placeholder">Email or phone</string>
+    <string name="settings_pikpak_password">Password</string>
+    <string name="settings_pikpak_password_description">Set a password in your PikPak account settings if you signed up via Google.</string>
+    <string name="settings_pikpak_password_hidden">••••••••</string>
     <string name="settings_tab_cache">Auto Cache</string>
     <string name="settings_tab_storage">Storage</string>
     <string name="settings_tab_settings_backup">Settings Backup</string>

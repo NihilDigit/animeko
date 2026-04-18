@@ -170,6 +170,7 @@ enum class SettingsTab {
 
     PROXY,
     BT,
+    PIKPAK,
 
     //    CACHE, // 自动缓存, 4.10 删除
     STORAGE,

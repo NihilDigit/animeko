@@ -10,7 +10,10 @@
 package me.him188.ani.app.desktop
 
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.runBlocking
 import me.him188.ani.app.data.persistent.dataStores
 import me.him188.ani.app.data.persistent.database.AniDatabase
@@ -30,7 +33,11 @@ import me.him188.ani.app.domain.media.resolver.DesktopWebMediaResolver
 import me.him188.ani.app.domain.media.resolver.HttpStreamingMediaResolver
 import me.him188.ani.app.domain.media.resolver.LocalFileMediaResolver
 import me.him188.ani.app.domain.media.resolver.MediaResolver
+import me.him188.ani.app.domain.media.resolver.OfflineDownloadMediaResolver
 import me.him188.ani.app.domain.media.resolver.TorrentMediaResolver
+import me.him188.ani.torrent.offline.OfflineDownloadEngine
+import me.him188.ani.torrent.pikpak.PikPakCredentials
+import me.him188.ani.torrent.pikpak.PikPakOfflineDownloadEngine
 import me.him188.ani.app.domain.mediasource.web.DesktopWebCaptchaCoordinator
 import me.him188.ani.app.domain.mediasource.web.WebCaptchaCoordinator
 import me.him188.ani.app.domain.torrent.DefaultTorrentManager
@@ -124,10 +131,24 @@ fun getDesktopModules(getContext: () -> DesktopContext, scope: CoroutineScope) =
     }
     single<BrowserNavigator> { DesktopBrowserNavigator() }
     single<WebCaptchaCoordinator> { DesktopWebCaptchaCoordinator(AniDesktopCaptchaTopBar) }
+    single<OfflineDownloadEngine> {
+        val credentialsFlow = get<SettingsRepository>().pikpakConfig.flow
+            .map { cfg ->
+                if (cfg.enabled && cfg.username.isNotEmpty() && cfg.password.isNotEmpty()) {
+                    PikPakCredentials(cfg.username, cfg.password)
+                } else null
+            }
+            .stateIn(scope, SharingStarted.Eagerly, initialValue = null)
+        PikPakOfflineDownloadEngine(
+            httpClient = get<HttpClientProvider>().get(ScopedHttpClientUserAgent.ANI),
+            credentials = credentialsFlow,
+            scope = scope,
+        )
+    }
     factory<MediaResolver> {
         MediaResolver.from(
-            get<TorrentManager>().engines
-                .map { TorrentMediaResolver(it, get()) }
+            listOf<MediaResolver>(OfflineDownloadMediaResolver(get()))
+                .plus(get<TorrentManager>().engines.map { TorrentMediaResolver(it, get()) })
                 .plus(LocalFileMediaResolver())
                 .plus(HttpStreamingMediaResolver())
                 .plus(

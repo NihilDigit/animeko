@@ -25,6 +25,7 @@ import me.him188.ani.app.data.models.danmaku.DanmakuConfigSerializer
 import me.him188.ani.app.data.models.danmaku.DanmakuFilterConfig
 import me.him188.ani.app.data.models.preference.AnalyticsSettings
 import me.him188.ani.app.data.models.preference.AnitorrentConfig
+import me.him188.ani.app.data.models.preference.PikPakConfig
 import me.him188.ani.app.data.models.preference.DanmakuSettings
 import me.him188.ani.app.data.models.preference.DebugSettings
 import me.him188.ani.app.data.models.preference.MediaCacheSettings
@@ -131,6 +132,9 @@ class SettingsViewModel : AbstractSettingsViewModel(), KoinComponent {
 
     val torrentSettingsState: SettingsState<AnitorrentConfig> =
         settingsRepository.anitorrentConfig.stateInBackground(AnitorrentConfig.Default.copy(_placeholder = -1))
+
+    val pikpakSettingsState: SettingsState<PikPakConfig> =
+        settingsRepository.pikpakConfig.stateInBackground(PikPakConfig.Default)
 
     val cacheDirectoryGroupState = CacheDirectoryGroupState(
         mediaCacheSettingsState,
