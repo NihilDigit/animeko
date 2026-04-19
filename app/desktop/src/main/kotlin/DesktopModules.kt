@@ -39,7 +39,7 @@ import me.him188.ani.app.data.models.preference.PikPakConfig
 import me.him188.ani.torrent.offline.OfflineDownloadEngine
 import me.him188.ani.torrent.pikpak.PikPakCredentials
 import me.him188.ani.torrent.pikpak.PikPakOfflineDownloadEngine
-import me.him188.ani.torrent.pikpak.PikPakTokenStore
+import me.him188.ani.torrent.pikpak.PikPakSessionStoreAdapter
 import me.him188.ani.app.domain.mediasource.web.DesktopWebCaptchaCoordinator
 import me.him188.ani.app.domain.mediasource.web.WebCaptchaCoordinator
 import me.him188.ani.app.domain.torrent.DefaultTorrentManager
@@ -144,20 +144,17 @@ fun getDesktopModules(getContext: () -> DesktopContext, scope: CoroutineScope) =
                 } else null
             }
             .stateIn(scope, SharingStarted.Eagerly, initialValue = null)
-        val tokenStore = object : PikPakTokenStore {
-            override val deviceId: String get() = configState.value.deviceId
-            override val refreshToken: String get() = configState.value.refreshToken
-            override suspend fun update(deviceId: String, refreshToken: String) {
-                settings.pikpakConfig.update {
-                    copy(deviceId = deviceId, refreshToken = refreshToken)
-                }
-            }
-        }
+        val sessionStore = PikPakSessionStoreAdapter(
+            readRefreshToken = { configState.value.refreshToken },
+            writeRefreshToken = { rt ->
+                settings.pikpakConfig.update { copy(refreshToken = rt) }
+            },
+        )
         PikPakOfflineDownloadEngine(
-            httpClient = get<HttpClientProvider>().get(ScopedHttpClientUserAgent.ANI),
+            scopedHttpClient = get<HttpClientProvider>().get(ScopedHttpClientUserAgent.ANI),
             credentials = credentialsFlow,
             scope = scope,
-            tokenStore = tokenStore,
+            sessionStore = sessionStore,
         )
     }
     factory<MediaResolver> {
