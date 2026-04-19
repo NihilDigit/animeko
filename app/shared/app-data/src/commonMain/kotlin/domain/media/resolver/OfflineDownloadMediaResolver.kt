@@ -21,9 +21,17 @@ import kotlin.coroutines.cancellation.CancellationException
  * Placed **first** in the resolver chain so it intercepts magnets before the
  * local anitorrent-based [TorrentMediaResolver]. If the engine is disabled or
  * unconfigured, [supports] returns `false` and the chain falls through.
+ *
+ * When [fallback] is supplied, any engine-side failure (auth, network, rejected
+ * uri, timeout, unknown) is caught and delegated to it instead of surfacing as
+ * a [MediaResolutionException]. This keeps the offline provider from turning
+ * "external service disabled/broken" into a hard precondition for BT playback
+ * — the local torrent resolver stays reachable for the same magnet.
+ * [CancellationException] is always rethrown, never fallen through.
  */
 class OfflineDownloadMediaResolver(
     private val engine: OfflineDownloadEngine,
+    private val fallback: MediaResolver? = null,
 ) : MediaResolver {
     private val logger = logger<OfflineDownloadMediaResolver>()
 
@@ -70,21 +78,25 @@ class OfflineDownloadMediaResolver(
         }
         val resolved = try {
             engine.resolve(uri, pickVideoFile)
-        } catch (e: OfflineDownloadAuthException) {
-            logger.warn(e) { "${engine.id} auth failed" }
-            throw MediaResolutionException(ResolutionFailures.ENGINE_ERROR, e)
-        } catch (e: OfflineDownloadRejectedException) {
-            logger.warn(e) { "${engine.id} rejected uri" }
-            throw MediaResolutionException(ResolutionFailures.NO_MATCHING_RESOURCE, e)
-        } catch (e: TimeoutCancellationException) {
-            throw MediaResolutionException(ResolutionFailures.FETCH_TIMEOUT, e)
         } catch (e: CancellationException) {
             throw e
-        } catch (e: IOException) {
-            throw MediaResolutionException(ResolutionFailures.NETWORK_ERROR, e)
-        } catch (e: Exception) {
-            logger.warn(e) { "${engine.id} unexpected error" }
-            throw MediaResolutionException(ResolutionFailures.ENGINE_ERROR, e)
+        } catch (e: Throwable) {
+            val reason = when (e) {
+                is OfflineDownloadAuthException -> ResolutionFailures.ENGINE_ERROR
+                is OfflineDownloadRejectedException -> ResolutionFailures.NO_MATCHING_RESOURCE
+                is TimeoutCancellationException -> ResolutionFailures.FETCH_TIMEOUT
+                is IOException -> ResolutionFailures.NETWORK_ERROR
+                else -> ResolutionFailures.ENGINE_ERROR
+            }
+            val fb = fallback
+            if (fb != null && fb.supports(media)) {
+                logger.warn(e) {
+                    "[${engine.id}] resolve failed ($reason); falling back to local resolver"
+                }
+                return fb.resolve(media, episode)
+            }
+            logger.warn(e) { "[${engine.id}] resolve failed ($reason); no fallback available" }
+            throw MediaResolutionException(reason, e)
         }
 
         return HttpStreamingMediaDataProvider(

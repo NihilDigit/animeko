@@ -85,4 +85,43 @@ class PikPakSessionStoreAdapterTest {
         val loaded = store.adapter.load("user@example.com")
         assertEquals("rt-42", loaded?.refreshToken)
     }
+
+    @Test
+    fun `save fires onSessionSaved so the platform can drop the plaintext password`() = runTest {
+        var refreshToken = ""
+        var cleared = 0
+        val adapter = PikPakSessionStoreAdapter(
+            readRefreshToken = { refreshToken },
+            writeRefreshToken = { refreshToken = it },
+            onSessionSaved = { cleared++ },
+        )
+        adapter.save(
+            account = "user@example.com",
+            session = io.github.nihildigit.pikpak.Session(
+                accessToken = "at",
+                refreshToken = "rt-new",
+                sub = "sub",
+                expiresAt = 1L,
+            ),
+        )
+        assertEquals(1, cleared)
+        assertEquals("rt-new", refreshToken)
+    }
+
+    @Test
+    fun `clear does not fire onSessionSaved`() = runTest {
+        var refreshToken = "rt-existing"
+        var cleared = 0
+        val adapter = PikPakSessionStoreAdapter(
+            readRefreshToken = { refreshToken },
+            writeRefreshToken = { refreshToken = it },
+            onSessionSaved = { cleared++ },
+        )
+        // clear() runs when the SDK decides the current refresh token is no
+        // longer usable. Wiping the password here would strand the user —
+        // the next signin would fail because nothing knows the password.
+        adapter.clear("user@example.com")
+        assertEquals(0, cleared)
+        assertEquals("", refreshToken)
+    }
 }

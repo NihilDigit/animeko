@@ -70,13 +70,18 @@ internal fun SettingsScope.PikPakSettingsGroup(
             onValueChangeCompleted = { state.update(config.copy(username = it)) },
         )
 
+        // The password is only held until the engine signs in and stores a
+        // refresh token; after that, it's wiped from disk. Keep the masked
+        // placeholder visible while a refresh token is live so the user sees
+        // "we're authenticated" instead of "looks like I lost my password".
+        val hasLiveSession = config.refreshToken.isNotEmpty()
         TextFieldItem(
             value = config.password,
             title = { Text(stringResource(Lang.settings_pikpak_password)) },
             description = { Text(stringResource(Lang.settings_pikpak_password_description)) },
             exposedItem = { value ->
                 Text(
-                    if (value.isEmpty()) ""
+                    if (value.isEmpty() && !hasLiveSession) ""
                     else stringResource(Lang.settings_pikpak_password_hidden),
                 )
             },

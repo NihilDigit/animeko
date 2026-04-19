@@ -181,7 +181,9 @@ fun getAndroidModules(
             .stateIn(coroutineScope, SharingStarted.Eagerly, initialValue = PikPakConfig.Default)
         val credentialsFlow = configState
             .map { cfg ->
-                if (cfg.enabled && cfg.username.isNotEmpty() && cfg.password.isNotEmpty()) {
+                if (cfg.enabled && cfg.username.isNotEmpty() &&
+                    (cfg.password.isNotEmpty() || cfg.refreshToken.isNotEmpty())
+                ) {
                     PikPakCredentials(cfg.username, cfg.password)
                 } else null
             }
@@ -190,6 +192,11 @@ fun getAndroidModules(
             readRefreshToken = { configState.value.refreshToken },
             writeRefreshToken = { rt ->
                 settings.pikpakConfig.update { copy(refreshToken = rt) }
+            },
+            onSessionSaved = {
+                settings.pikpakConfig.update {
+                    if (password.isEmpty()) this else copy(password = "")
+                }
             },
         )
         PikPakOfflineDownloadEngine(
@@ -201,9 +208,11 @@ fun getAndroidModules(
         )
     }
     factory<MediaResolver> {
+        val torrentResolvers = get<TorrentManager>().engines.map { TorrentMediaResolver(it, get()) }
+        val btFallback = MediaResolver.from(torrentResolvers)
         MediaResolver.from(
-            listOf<MediaResolver>(OfflineDownloadMediaResolver(get()))
-                .plus(get<TorrentManager>().engines.map { TorrentMediaResolver(it, get()) })
+            listOf<MediaResolver>(OfflineDownloadMediaResolver(get(), fallback = btFallback))
+                .plus(torrentResolvers)
                 .plus(LocalFileMediaResolver())
                 .plus(HttpStreamingMediaResolver())
                 .plus(

@@ -137,9 +137,15 @@ fun getDesktopModules(getContext: () -> DesktopContext, scope: CoroutineScope) =
         val settings = get<SettingsRepository>()
         val configState = settings.pikpakConfig.flow
             .stateIn(scope, SharingStarted.Eagerly, initialValue = PikPakConfig.Default)
+        // Credentials are "usable" when we have a password to sign in with
+        // *or* a previously-persisted refresh token — either way the SDK
+        // has something to authenticate with. Once the refresh token is
+        // live, the plaintext password is wiped by `onSessionSaved` below.
         val credentialsFlow = configState
             .map { cfg ->
-                if (cfg.enabled && cfg.username.isNotEmpty() && cfg.password.isNotEmpty()) {
+                if (cfg.enabled && cfg.username.isNotEmpty() &&
+                    (cfg.password.isNotEmpty() || cfg.refreshToken.isNotEmpty())
+                ) {
                     PikPakCredentials(cfg.username, cfg.password)
                 } else null
             }
@@ -148,6 +154,14 @@ fun getDesktopModules(getContext: () -> DesktopContext, scope: CoroutineScope) =
             readRefreshToken = { configState.value.refreshToken },
             writeRefreshToken = { rt ->
                 settings.pikpakConfig.update { copy(refreshToken = rt) }
+            },
+            onSessionSaved = {
+                // Drop the plaintext password now that the refresh token is
+                // live. The UI key still shows "••••••" as long as the
+                // refresh token is present, so the user sees a stable state.
+                settings.pikpakConfig.update {
+                    if (password.isEmpty()) this else copy(password = "")
+                }
             },
         )
         PikPakOfflineDownloadEngine(
@@ -159,9 +173,15 @@ fun getDesktopModules(getContext: () -> DesktopContext, scope: CoroutineScope) =
         )
     }
     factory<MediaResolver> {
+        val torrentResolvers = get<TorrentManager>().engines.map { TorrentMediaResolver(it, get()) }
+        // Hand PikPak the local-BT resolvers as its fallback so a failing
+        // PikPak (auth/network/limit) doesn't lock the user out of BT
+        // playback. The fallback is still listed in the chain below for the
+        // PikPak-disabled case.
+        val btFallback = MediaResolver.from(torrentResolvers)
         MediaResolver.from(
-            listOf<MediaResolver>(OfflineDownloadMediaResolver(get()))
-                .plus(get<TorrentManager>().engines.map { TorrentMediaResolver(it, get()) })
+            listOf<MediaResolver>(OfflineDownloadMediaResolver(get(), fallback = btFallback))
+                .plus(torrentResolvers)
                 .plus(LocalFileMediaResolver())
                 .plus(HttpStreamingMediaResolver())
                 .plus(

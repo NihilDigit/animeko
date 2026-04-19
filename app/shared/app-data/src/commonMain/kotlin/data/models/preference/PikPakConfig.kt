@@ -5,20 +5,28 @@ import kotlinx.serialization.Serializable
 /**
  * User-configurable settings for the PikPak offline-download backend.
  *
- * The engine deletes each file from the user's PikPak drive immediately
- * after resolving its CDN URL (the URL survives deletion), so there is no
- * retention or folder-organization state to persist here.
+ * The engine runs a server-side slot cache: completed offline tasks stay in a
+ * well-known working folder on the user's PikPak drive, keyed by source
+ * bucket, so replays of the same magnet are served straight from the cache.
+ * Old buckets are evicted to honor [slotQueueLength] — they are *not* deleted
+ * immediately after each resolve. See `PikPakOfflineDownloadEngine` for the
+ * full eviction policy.
  *
- * [deviceId] and [refreshToken] are written by the engine after a successful
- * signin/refresh (not user-editable). They let the next app launch skip the
- * rate-limited `/v1/auth/signin` endpoint and go straight to a cheap refresh.
+ * [refreshToken] is written by the engine after a successful signin/refresh
+ * (not user-editable). It lets the next app launch skip the rate-limited
+ * `/v1/auth/signin` endpoint and go straight to a cheap refresh.
+ *
+ * [password] is accepted from the settings UI to bootstrap the first signin,
+ * but the engine clears it from this config once a refresh token has been
+ * obtained — so the password is not persisted to disk across app restarts. If
+ * the refresh token later becomes invalid, the UI will ask for the password
+ * again.
  */
 @Serializable
 data class PikPakConfig(
     val enabled: Boolean = false,
     val username: String = "",
     val password: String = "",
-    val deviceId: String = "",
     val refreshToken: String = "",
     /**
      * How many distinct source buckets the engine keeps cached in its
