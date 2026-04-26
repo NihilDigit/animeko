@@ -4,6 +4,7 @@ import io.github.nihildigit.pikpak.PikPakClient
 import io.github.nihildigit.pikpak.Session
 import io.github.nihildigit.pikpak.SessionStore
 import io.ktor.client.HttpClient
+import kotlinx.coroutines.CancellationException
 
 /**
  * Throwaway login probe: builds a [PikPakClient] with the given credentials and
@@ -29,6 +30,8 @@ suspend fun testPikPakLogin(
     return try {
         client.login()
         true
+    } catch (e: CancellationException) {
+        throw e
     } catch (_: Throwable) {
         false
     } finally {
