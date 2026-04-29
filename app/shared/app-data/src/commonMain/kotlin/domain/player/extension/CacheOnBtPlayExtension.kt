@@ -19,6 +19,7 @@ import me.him188.ani.app.domain.media.cache.MediaCacheManager
 import me.him188.ani.app.domain.media.cache.engine.MediaCacheEngineKey
 import me.him188.ani.app.domain.media.resolver.toEpisodeMetadata
 import me.him188.ani.app.domain.player.VideoLoadingState
+import me.him188.ani.datasources.api.CachedMedia
 import me.him188.ani.datasources.api.MediaCacheMetadata
 import me.him188.ani.utils.logging.info
 import me.him188.ani.utils.logging.logger
@@ -66,6 +67,10 @@ class CacheOnBtPlayExtension(
                         }
 
                         val media = bundle.mediaSelector.selected.filterNotNull().first()
+                        if (media is CachedMedia) {
+                            // 选中了正在下载中的 BT 源.
+                            return@collectLatest
+                        }
                         logger.info { "Auto cache BitTorrent media on play: $media" }
 
                         val metadata =
