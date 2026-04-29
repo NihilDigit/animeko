@@ -16,6 +16,8 @@ import kotlinx.serialization.descriptors.PrimitiveSerialDescriptor
 import kotlinx.serialization.descriptors.SerialDescriptor
 import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
+import me.him188.ani.app.data.models.preference.PikPakConfig.Companion.SLOT_QUEUE_MAX_NUMERIC
+import me.him188.ani.app.data.models.preference.PikPakConfig.Companion.SLOT_QUEUE_UNLIMITED
 import me.him188.ani.utils.io.obscure
 import me.him188.ani.utils.io.tryReveal
 
@@ -59,6 +61,12 @@ data class PikPakConfig(
      */
     val slotQueueLength: Int = 1,
 ) {
+    override fun toString(): String {
+        return "PikPakConfig(enabled=$enabled, username=$username, password.hash=${password.hashCode()}, " +
+                "refreshToken.hash=${refreshToken.let { if (it.isNotEmpty()) it.hashCode() else "" }}, " +
+                "slotQueueLength=$slotQueueLength)"
+    }
+
     companion object {
         val Default = PikPakConfig()
 
