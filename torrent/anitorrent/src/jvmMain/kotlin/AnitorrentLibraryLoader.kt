@@ -12,6 +12,7 @@ package me.him188.ani.app.torrent.anitorrent
 import me.him188.ani.app.torrent.api.TorrentLibraryLoader
 import me.him188.ani.utils.logging.info
 import me.him188.ani.utils.logging.logger
+import me.him188.ani.utils.platform.Arch
 import me.him188.ani.utils.platform.Platform
 import me.him188.ani.utils.platform.currentPlatform
 import me.him188.ani.utils.platform.isAndroid
@@ -60,10 +61,10 @@ object AnitorrentLibraryLoader : TorrentLibraryLoader {
                 logger.info { "Temp dir: ${temp.absolutePathString()}" }
                 when (platform) {
                     is Platform.Windows -> {
-                        extractLibraryFromResources("libssl-3-x64", temp)?.let {
+                        extractLibraryFromResources("libssl-3-${platform.windowsOpenSslArchSuffix()}", temp)?.let {
                             logger.info { "Extract ssl: ${it.absolutePathString()}" }
                         }
-                        extractLibraryFromResources("libcrypto-3-x64", temp)?.let {
+                        extractLibraryFromResources("libcrypto-3-${platform.windowsOpenSslArchSuffix()}", temp)?.let {
                             logger.info { "Extract crypto: ${it.absolutePathString()}" }
                         }
                         loadLibraryFromResources("torrent-rasterbar", temp)
@@ -111,6 +112,14 @@ object AnitorrentLibraryLoader : TorrentLibraryLoader {
             is Platform.Linux -> "lib$name.so"
             is Platform.Windows -> "$name.dll"
             is Platform.MacOS -> "lib$name.dylib"
+        }
+    }
+
+    private fun Platform.Windows.windowsOpenSslArchSuffix(): String {
+        return when (arch) {
+            Arch.X86_64 -> "x64"
+            Arch.AARCH64 -> "arm64"
+            else -> error("Unsupported Windows architecture: $arch")
         }
     }
 
