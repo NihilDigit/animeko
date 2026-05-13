@@ -59,6 +59,7 @@ import Secrets.SIGNING_RELEASE_KEYALIAS
 import Secrets.SIGNING_RELEASE_KEYPASSWORD
 import Secrets.SIGNING_RELEASE_STOREFILE
 import Secrets.SIGNING_RELEASE_STOREPASSWORD
+import Secrets.WOA64_CI_TOKEN
 import io.github.typesafegithub.workflows.actions.actions.Checkout
 import io.github.typesafegithub.workflows.actions.actions.DownloadArtifact
 import io.github.typesafegithub.workflows.actions.actions.GithubScript
@@ -83,8 +84,10 @@ import io.github.typesafegithub.workflows.domain.Permission
 import io.github.typesafegithub.workflows.domain.RunnerType
 import io.github.typesafegithub.workflows.domain.Shell
 import io.github.typesafegithub.workflows.domain.actions.Action
+import io.github.typesafegithub.workflows.domain.actions.CustomAction
 import io.github.typesafegithub.workflows.domain.triggers.PullRequest
 import io.github.typesafegithub.workflows.domain.triggers.Push
+import io.github.typesafegithub.workflows.domain.triggers.WorkflowDispatch
 import io.github.typesafegithub.workflows.dsl.JobBuilder
 import io.github.typesafegithub.workflows.dsl.WorkflowBuilder
 import io.github.typesafegithub.workflows.dsl.expressions.contexts.GitHubContext
@@ -322,6 +325,14 @@ sealed class Runner(
         labels = setOf("windows-2022"),
     )
 
+    object GithubWindows11Arm64 : GithubHosted(
+        id = "github-windows-11-arm64",
+        displayName = "Windows 11 AArch64 (GitHub)",
+        os = OS.WINDOWS,
+        arch = Arch.AARCH64,
+        labels = setOf("windows-11-arm"),
+    )
+
     object GithubMacOS14 : GithubHosted(
         id = "github-macos-14",
         displayName = "macOS 14 AArch64 (GitHub)",
@@ -419,6 +430,19 @@ run {
         gradleHeap = "4g",
         gradleParallel = true,
     )
+    val ghWinArm64 = MatrixInstance(
+        runner = Runner.GithubWindows11Arm64,
+        uploadApk = false,
+        composeResourceTriple = "windows-arm64",
+        uploadDesktopInstallers = true,
+        extraGradleArgs = listOf(
+            "-P$ANI_ANDROID_ABIS=arm64-v8a",
+            "--no-configuration-cache", // WOA64: Gradle fails storing KotlinCompile state on windows-11-arm.
+        ),
+        buildAllAndroidAbis = false,
+        gradleHeap = "4g",
+        gradleParallel = true,
+    )
     val ghUbuntu2404 = MatrixInstance(
         runner = Runner.GithubUbuntu2404,
         uploadApk = true,
@@ -487,6 +511,7 @@ run {
     buildMatrixInstances = listOf(
 //        selfWin10,
         ghWin,
+        ghWinArm64,
         ghUbuntu2404,
         ghMac15Intel,
         selfMac15.copy(
@@ -522,8 +547,10 @@ fun getBuildJobBody(matrix: MatrixInstance): JobBuilder<BuildJobOutputs>.() -> U
         enableSwap()
         deleteLocalProperties()
         writeLocalProperties()
+        setupAndroidSdkForWindowsArm64()
         installJbr21()
         chmod777()
+        prepareMockMavenForOrchestration()
         setupGradle()
 
         runGradle(
@@ -556,6 +583,7 @@ fun getBuildJobBody(matrix: MatrixInstance): JobBuilder<BuildJobOutputs>.() -> U
 
 object ArtifactNames {
     fun windowsPortable() = "ani-windows-portable"
+    fun windowsAarch64Portable() = "ani-windows-aarch64-portable"
     fun macosDmg(arch: Arch) = "ani-macos-dmg-${arch}"
     fun macosPortable(arch: Arch) = "ani-macos-portable-${arch}"
     fun iosIpa() = "ani-ios-ipa"
@@ -628,6 +656,21 @@ fun getVerifyJobBody(
             disabledOn = listOf(Runner.GithubUbuntu2404),
         ),
         VerifyTask(
+            name = "anitorrent-session-smoke-test",
+            step = "Check that Anitorrent can start a session",
+            enabledOnlyOn = listOf(Runner.GithubWindows11Arm64),
+        ),
+        VerifyTask(
+            name = "mediamp-ffmpeg-smoke-test",
+            step = "Check that MediaMP FFmpeg can run",
+            enabledOnlyOn = listOf(Runner.GithubWindows11Arm64),
+        ),
+        VerifyTask(
+            name = "mediamp-vlc-load-test",
+            step = "Check that MediaMP VLC can be loaded",
+            enabledOnlyOn = listOf(Runner.GithubWindows11Arm64),
+        ),
+        VerifyTask(
             name = "dandanplay-app-id",
             step = "Check that Dandanplay APP ID is valid",
             `if` = expr { github.isAnimekoRepository and !github.isPullRequest },
@@ -636,6 +679,11 @@ fun getVerifyJobBody(
             name = "sentry-dsn",
             step = "Check that sentryDsn is valid",
             `if` = expr { github.isAnimekoRepository and !github.isPullRequest },
+        ),
+        VerifyTask(
+            name = "sqlite-bundled-load-test",
+            step = "Check that bundled SQLite can be loaded",
+            enabledOnlyOn = listOf(Runner.GithubWindows11Arm64),
         ),
     ).filter { task ->
         // Filter task that should execute on this runner.
@@ -658,6 +706,29 @@ fun getVerifyJobBody(
                 name = "Download Windows x64 Portable",
                 action = DownloadArtifact(
                     name = ArtifactNames.windowsPortable(),
+                    path = "${expr { github.workspace }}/ci-helper/verify",
+                ),
+            )
+            tasksToExecute.forEach { task ->
+                run(
+                    name = task.step,
+                    shell = Shell.PowerShell,
+                    command = shell(
+                        $$"""
+                        powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$${expr { github.workspace }}/ci-helper/verify/run-ani-test-windows-x64.ps1" "$${expr { github.workspace }}\ci-helper\verify" "$${task.name}"
+                        """.trimIndent(),
+                    ),
+                    `if` = task.`if`,
+                    timeoutMinutes = task.timeoutMinutes,
+                )
+            }
+        }
+
+        OS.WINDOWS to Arch.AARCH64 -> {
+            usesWithAttempts(
+                name = "Download Windows AArch64 Portable",
+                action = DownloadArtifact(
+                    name = ArtifactNames.windowsAarch64Portable(),
                     path = "${expr { github.workspace }}/ci-helper/verify",
                 ),
             )
@@ -780,6 +851,29 @@ workflow(
         // - pushing to a branch that has an associated PR
         Push(pathsIgnore = commonIgnoredPaths),
         PullRequest(pathsIgnore = commonIgnoredPaths),
+        // WOA64 orchestration harness: temporary manual trigger used by animeko-woa64.
+        WorkflowDispatch(
+            inputs = mapOf(
+                "mock_maven_repo" to WorkflowDispatch.Input(
+                    description = "Repository containing the mock Maven artifact",
+                    required = false,
+                    type = WorkflowDispatch.Type.String,
+                    default = "",
+                ),
+                "mock_maven_run_id" to WorkflowDispatch.Input(
+                    description = "Run id containing the mock Maven artifact",
+                    required = false,
+                    type = WorkflowDispatch.Type.String,
+                    default = "",
+                ),
+                "mock_maven_artifact" to WorkflowDispatch.Input(
+                    description = "Mock Maven artifact name",
+                    required = false,
+                    type = WorkflowDispatch.Type.String,
+                    default = "",
+                ),
+            ),
+        ),
     ),
     sourceFile = __FILE__,
     targetFileName = "build.yml",
@@ -806,12 +900,17 @@ workflow(
             permissions = mapOf(
                 Permission.Actions to Mode.Write, // Upload artifacts
             ),
-            `if` = if (matrix.selfHosted) {
-                // For self-hosted runners, only run if it's our main repository (not a fork).
-                // For security concerns, all external contributors will need approval to run the workflow.
-                expr { github.isAnimekoRepository }
-            } else {
-                null // always
+            `if` = when {
+                matrix.selfHosted -> {
+                    // For self-hosted runners, only run if it's our main repository (not a fork).
+                    // For security concerns, all external contributors will need approval to run the workflow.
+                    expr { github.isAnimekoRepository and github.event_name.neq("workflow_dispatch") }
+                }
+
+                matrix.isWindowsAArch64 -> null
+
+                // WOA64 orchestration harness: manual dispatch only exercises the Windows ARM64 job.
+                else -> expr { github.event_name.neq("workflow_dispatch") }
             },
             outputs = BuildJobOutputs(),
             block = getBuildJobBody(matrix),
@@ -819,7 +918,7 @@ workflow(
     }
 
     builds.filter { (matrix, _) ->
-        matrix.runner.os == OS.WINDOWS && matrix.uploadDesktopInstallers
+        matrix.runner.os == OS.WINDOWS && matrix.arch == Arch.X64 && matrix.uploadDesktopInstallers
     }.forEach { (_, build) ->
         listOf(
             Runner.GithubWindowsServer2025,
@@ -828,6 +927,12 @@ workflow(
         ).forEach { runner ->
             addVerifyJob(build, runner, build.result.eq(AbstractResult.Status.Success))
         }
+    }
+
+    builds.filter { (matrix, _) ->
+        matrix.runner.os == OS.WINDOWS && matrix.arch == Arch.AARCH64 && matrix.uploadDesktopInstallers
+    }.forEach { (_, build) ->
+        addVerifyJob(build, Runner.GithubWindows11Arm64, build.result.eq(AbstractResult.Status.Success))
     }
 
     builds.filter { (matrix, _) ->
@@ -1183,6 +1288,23 @@ class WithMatrix(
         }
     }
 
+    fun JobBuilder<*>.setupAndroidSdkForWindowsArm64() {
+        if (matrix.isWindowsAArch64) {
+            uses(
+                name = "Setup Android SDK",
+                action = CustomAction(
+                    actionOwner = "android-actions",
+                    actionName = "setup-android",
+                    actionVersion = "v3",
+                    inputs = mapOf(
+                        "accept-android-sdk-licenses" to "true",
+                        "packages" to "platform-tools platforms;android-36 build-tools;36.0.0",
+                    ),
+                ),
+            )
+        }
+    }
+
     fun JobBuilder<*>.installJbr21() {
         // For mac
         fun downloadJbrUnix(
@@ -1289,7 +1411,12 @@ class WithMatrix(
             }
 
             OS.WINDOWS -> {
-                val jbrLocationExpr = downloadJbrUsingPython("jbrsdk_jcef-21.0.5-windows-x64-b750.29.tar.gz")
+                val jbrLocationExpr = if (matrix.arch == Arch.AARCH64) {
+                    // WoA-only: Windows ARM64 needs a JBR/JCEF build matching the process architecture.
+                    downloadJbrUsingPython("jbrsdk_jcef-21.0.10-windows-aarch64-b1163.110.tar.gz")
+                } else {
+                    downloadJbrUsingPython("jbrsdk_jcef-21.0.5-windows-x64-b750.29.tar.gz")
+                }
                 uses(
                     name = "Setup JBR 21 for Windows",
                     action = SetupJava_Untyped(
@@ -1360,6 +1487,55 @@ class WithMatrix(
                 command = "chmod -R 777 .",
             )
         }
+    }
+
+    fun JobBuilder<*>.prepareMockMavenForOrchestration() {
+        if (!matrix.isWindowsAArch64) return
+
+        val hasMockMavenInput = "\${{ github.event_name == 'workflow_dispatch' && github.event.inputs.mock_maven_artifact != '' }}"
+        // WOA64 orchestration harness: temporary dependency injection until upstream artifacts are published.
+        uses(
+            name = "Download WOA64 mock Maven repository",
+            `if` = hasMockMavenInput,
+            action = DownloadArtifact(
+                name_Untyped = "\${{ github.event.inputs.mock_maven_artifact }}",
+                path = "build/woa64-mock-maven",
+                githubToken_Untyped = expr { secrets.WOA64_CI_TOKEN },
+                repository_Untyped = "\${{ github.event.inputs.mock_maven_repo }}",
+                runId_Untyped = "\${{ github.event.inputs.mock_maven_run_id }}",
+            ),
+        )
+        run(
+            name = "Configure WOA64 mock Maven repository",
+            `if` = hasMockMavenInput,
+            shell = Shell.Pwsh,
+            command = shell(
+                $$"""
+                $repo = (Resolve-Path "build/woa64-mock-maven").Path.Replace('\','/')
+                $initDir = Join-Path $HOME ".gradle/init.d"
+                New-Item -ItemType Directory -Force -Path $initDir | Out-Null
+                @"
+                gradle.beforeSettings { settings ->
+                    settings.dependencyResolutionManagement.repositories {
+                        maven {
+                            name = 'woa64Mock'
+                            url = uri('file:///$repo')
+                        }
+                    }
+                }
+
+                allprojects {
+                    repositories {
+                        maven {
+                            name = 'woa64Mock'
+                            url = uri('file:///$repo')
+                        }
+                    }
+                }
+                "@ | Set-Content -Path (Join-Path $initDir "woa64-mock-maven.gradle") -Encoding utf8
+                """.trimIndent(),
+            ),
+        )
     }
 
     fun JobBuilder<*>.setupGradle() {
@@ -1657,7 +1833,37 @@ class WithMatrix(
     class PackageDesktopAndUploadOutputs {
     }
 
+    fun JobBuilder<*>.patchBundledSqliteForWindowsArm64() {
+        if (matrix.isWindowsAArch64) {
+            run(
+                name = "Patch AndroidX SQLite bundled runtime for Windows ARM64",
+                shell = Shell.PowerShell,
+                command = shell(
+                    """
+                    powershell.exe -NoProfile -ExecutionPolicy Bypass -File ci-helper/sqlite-woa64/patch-sqlite-bundled-windows-arm64.ps1 app/desktop/build/compose/binaries/main-release/app
+                    """.trimIndent(),
+                ),
+            )
+        }
+    }
+
+    fun JobBuilder<*>.prepareVlcForWindowsArm64() {
+        if (matrix.isWindowsAArch64) {
+            run(
+                name = "Prepare VLC runtime for Windows ARM64",
+                shell = Shell.PowerShell,
+                command = shell(
+                    """
+                    powershell.exe -NoProfile -ExecutionPolicy Bypass -File ci-helper/vlc-woa64/prepare-vlc-windows-arm64.ps1 app/desktop/appResources/windows-arm64/lib
+                    """.trimIndent(),
+                ),
+            )
+        }
+    }
+
     fun JobBuilder<*>.packageDesktopAndUpload(): PackageDesktopAndUploadOutputs {
+        prepareVlcForWindowsArm64()
+
         if (matrix.isWindows) {
             // Windows does not support installers
             runGradle(
@@ -1689,6 +1895,7 @@ class WithMatrix(
             )
         }
 
+        patchBundledSqliteForWindowsArm64()
         uploadComposeLogs()
 
         return PackageDesktopAndUploadOutputs().apply {
@@ -1720,7 +1927,11 @@ class WithMatrix(
                 usesWithAttempts(
                     name = "Upload Windows packages",
                     action = UploadArtifact(
-                        name = ArtifactNames.windowsPortable(),
+                        name = if (matrix.arch == Arch.AARCH64) {
+                            ArtifactNames.windowsAarch64Portable()
+                        } else {
+                            ArtifactNames.windowsPortable()
+                        },
                         path_Untyped = "app/desktop/build/compose/binaries/main-release/app",
                         overwrite = true,
                         ifNoFilesFound = UploadArtifact.BehaviorIfNoFilesFound.Error,
@@ -1931,6 +2142,7 @@ class WithMatrix(
 
 object Secrets {
     val SecretsContext.GITHUB_REPOSITORY by SecretsContext.propertyToExprPath
+    val SecretsContext.WOA64_CI_TOKEN by SecretsContext.propertyToExprPath
     val SecretsContext.SIGNING_RELEASE_STOREFILE by SecretsContext.propertyToExprPath
     val SecretsContext.SIGNING_RELEASE_STOREPASSWORD by SecretsContext.propertyToExprPath
     val SecretsContext.SIGNING_RELEASE_KEYALIAS by SecretsContext.propertyToExprPath
@@ -1977,6 +2189,7 @@ val MatrixInstance.isUnix get() = (os == OS.UBUNTU) or (os == (OS.MACOS))
 
 val MatrixInstance.isMacOSAArch64 get() = (os == OS.MACOS) and (arch == Arch.AARCH64)
 val MatrixInstance.isMacOSX64 get() = (os == OS.MACOS) and (arch == Arch.X64)
+val MatrixInstance.isWindowsAArch64 get() = (os == OS.WINDOWS) and (arch == Arch.AARCH64)
 
 // only for highlighting (though this does not work in KT 2.1.0)
 fun shell(@Language("shell") command: String) = command

@@ -56,7 +56,7 @@ fun getAnitorrentTriple(): String? {
         Os.Windows -> {
             when (getArch()) {
                 Arch.X86_64 -> "windows-x64"
-                else -> error("Unsupported architecture: ${getArch()}")
+                Arch.AARCH64 -> "windows-arm64"
             }
         }
 
