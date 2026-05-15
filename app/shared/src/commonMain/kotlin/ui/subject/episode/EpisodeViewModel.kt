@@ -643,7 +643,6 @@ class EpisodeViewModel(
                 value = value,
                 selected = selected,
             )
-            commentStateRestarter.restart()
         },
         backgroundScope = backgroundScope,
     )

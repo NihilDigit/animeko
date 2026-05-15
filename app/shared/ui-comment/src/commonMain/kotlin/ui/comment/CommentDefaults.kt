@@ -13,6 +13,8 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
@@ -31,7 +33,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SuggestionChipDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
@@ -138,28 +139,29 @@ object CommentDefaults {
     ) {
         val previewing = LocalIsPreviewing.current
         FlowRow(
-            modifier = modifier.padding(8.dp),
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
+            modifier = modifier
+                .verticalScroll(rememberScrollState())
+                .padding(6.dp),
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
             BangumiCommentSticker.map { (id, drawableRes) -> id to drawableRes }.forEach { (id, drawableRes) ->
                 Surface(
                     onClick = { onClickItem("bgm$id") },
                     shape = CircleShape,
                     color = Color.Transparent,
-                    modifier = Modifier.minimumInteractiveComponentSize(),
                 ) {
                     if (previewing) {
                         Icon(
                             imageVector = Icons.Rounded.Face,
                             contentDescription = null,
-                            modifier = Modifier.padding(6.dp).size(28.dp),
+                            modifier = Modifier.padding(4.dp).size(22.dp),
                         )
                     } else {
                         Image(
                             painter = painterResource(drawableRes),
                             contentDescription = null,
-                            modifier = Modifier.padding(6.dp).size(28.dp),
+                            modifier = Modifier.padding(4.dp).size(22.dp),
                         )
                     }
                 }
@@ -172,6 +174,7 @@ object CommentDefaults {
         onClickReply: () -> Unit,
         modifier: Modifier = Modifier,
         showReply: Boolean = true,
+        showReaction: Boolean = true,
         onClickReaction: () -> Unit,
         onClickBlock: () -> Unit,
         onClickReport: () -> Unit
@@ -191,13 +194,15 @@ object CommentDefaults {
                     )
                 }
 
-                EditCommentDefaults.ActionButton(
-                    imageVector = Icons.Outlined.AddReaction,
-                    contentDescription = "添加表情",
-                    onClick = onClickReaction,
-                    iconSize = iconSize,
-                    modifier = Modifier.size(size),
-                )
+                if (showReaction) {
+                    EditCommentDefaults.ActionButton(
+                        imageVector = Icons.Outlined.AddReaction,
+                        contentDescription = "添加表情",
+                        onClick = onClickReaction,
+                        iconSize = iconSize,
+                        modifier = Modifier.size(size),
+                    )
+                }
             }
         }
     }

@@ -17,7 +17,8 @@ import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
@@ -133,6 +134,7 @@ fun EpisodeComment(
     modifier: Modifier = Modifier
 ) {
     var showReactionPicker by remember(comment.stableId) { mutableStateOf(false) }
+    val canAddReaction = comment.source == UICommentSource.ANI
 
     Comment(
         avatar = { CommentDefaults.Avatar(comment.author?.avatarUrl) },
@@ -174,12 +176,13 @@ fun EpisodeComment(
         actionRow = {
             CommentDefaults.ActionRow(
                 onClickReply = onActionReply,
-                showReply = comment.canReply,
+                showReply = false,
+                showReaction = canAddReaction,
                 onClickReaction = { showReactionPicker = !showReactionPicker },
                 onClickBlock = {},
                 onClickReport = {},
             )
-            if (showReactionPicker) {
+            if (canAddReaction && showReactionPicker) {
                 Popup(
                     onDismissRequest = { showReactionPicker = false },
                     properties = PopupProperties(focusable = true),
@@ -188,7 +191,9 @@ fun EpisodeComment(
                         shape = MaterialTheme.shapes.small,
                         tonalElevation = 6.dp,
                         shadowElevation = 6.dp,
-                        modifier = Modifier.widthIn(max = 320.dp),
+                        modifier = Modifier
+                            .width(216.dp)
+                            .heightIn(max = 280.dp),
                     ) {
                         CommentDefaults.ReactionPicker(
                             onClickItem = {
