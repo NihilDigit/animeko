@@ -323,6 +323,7 @@ class DualSourceEpisodeCommentPagingSourceTest {
             createdAtMillis = createdAt,
             replyCount = 0,
             briefReplies = emptyList(),
+            reactions = emptyList(),
             canReply = true,
         )
     }
