@@ -11,6 +11,7 @@ package me.him188.ani.app.ui.comment
 
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -21,6 +22,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.AddReaction
 import androidx.compose.material.icons.outlined.ModeComment
 import androidx.compose.material.icons.rounded.Face
 import androidx.compose.material3.Icon
@@ -77,7 +79,6 @@ object CommentDefaults {
         Surface(
             onClick = onClick,
             modifier = Modifier
-                .minimumInteractiveComponentSize()
                 .then(modifier),
             enabled = true,
             shape = CircleShape,
@@ -89,13 +90,14 @@ object CommentDefaults {
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 val previewing = LocalIsPreviewing.current
-                val reactionDrawableRes = BangumiCommentSticker[reaction.id]
+                val reactionDrawableRes = reaction.value.bangumiReactionIdOrNull()
+                    ?.let { BangumiCommentSticker[it] }
 
                 if (previewing || reactionDrawableRes == null) Icon(
                     imageVector = Icons.Rounded.Face,
                     modifier = Modifier.padding(end = 4.dp).size(24.dp),
                     contentDescription = null,
-                ) else Icon(
+                ) else Image(
                     painter = painterResource(reactionDrawableRes),
                     modifier = Modifier.padding(end = 4.dp).size(24.dp),
                     contentDescription = null,
@@ -113,7 +115,7 @@ object CommentDefaults {
     @Composable
     fun ReactionRow(
         list: List<UICommentReaction>,
-        onClickItem: (reactionId: Int) -> Unit,
+        onClickItem: (reactionValue: String) -> Unit,
         modifier: Modifier = Modifier,
     ) {
         FlowRow(
@@ -123,8 +125,44 @@ object CommentDefaults {
             list.forEach {
                 Reaction(
                     reaction = it,
-                    onClick = { onClickItem(it.id) },
+                    onClick = { onClickItem(it.value) },
                 )
+            }
+        }
+    }
+
+    @Composable
+    fun ReactionPicker(
+        onClickItem: (reactionValue: String) -> Unit,
+        modifier: Modifier = Modifier,
+    ) {
+        val previewing = LocalIsPreviewing.current
+        FlowRow(
+            modifier = modifier.padding(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            BangumiCommentSticker.map { (id, drawableRes) -> id to drawableRes }.forEach { (id, drawableRes) ->
+                Surface(
+                    onClick = { onClickItem("bgm$id") },
+                    shape = CircleShape,
+                    color = Color.Transparent,
+                    modifier = Modifier.minimumInteractiveComponentSize(),
+                ) {
+                    if (previewing) {
+                        Icon(
+                            imageVector = Icons.Rounded.Face,
+                            contentDescription = null,
+                            modifier = Modifier.padding(6.dp).size(28.dp),
+                        )
+                    } else {
+                        Image(
+                            painter = painterResource(drawableRes),
+                            contentDescription = null,
+                            modifier = Modifier.padding(6.dp).size(28.dp),
+                        )
+                    }
+                }
             }
         }
     }
@@ -133,59 +171,33 @@ object CommentDefaults {
     fun ActionRow(
         onClickReply: () -> Unit,
         modifier: Modifier = Modifier,
+        showReply: Boolean = true,
         onClickReaction: () -> Unit,
         onClickBlock: () -> Unit,
         onClickReport: () -> Unit
     ) {
         val size = EditCommentDefaults.ActionButtonSize.dp
         val iconSize = 20.dp
-        var actionRowExpanded by rememberSaveable { mutableStateOf(false) }
-        val expandableActionWidth by animateDpAsState(if (actionRowExpanded) size else 0.dp)
-
         Row(modifier = modifier) {
             CompositionLocalProvider(
                 LocalContentColor provides MaterialTheme.colorScheme.onSurface.stronglyWeaken(),
             ) {
-                EditCommentDefaults.ActionButton(
-                    imageVector = Icons.Outlined.ModeComment,
-                    contentDescription = "回复评论",
-                    onClick = onClickReply,
-                    iconSize = iconSize,
-                )
-
-                /*if (actionRowExpanded) {
+                if (showReply) {
                     EditCommentDefaults.ActionButton(
-                        imageVector = Icons.Outlined.AddReaction,
-                        contentDescription = "添加表情",
-                        onClick = onClickReaction,
+                        imageVector = Icons.Outlined.ModeComment,
+                        contentDescription = "回复评论",
+                        onClick = onClickReply,
                         iconSize = iconSize,
-                        modifier = Modifier.size(height = size, width = expandableActionWidth),
-                    )
-                    EditCommentDefaults.ActionButton(
-                        imageVector = Icons.Outlined.HeartBroken,
-                        contentDescription = "拉黑用户",
-                        onClick = onClickBlock,
-                        iconSize = iconSize,
-                        modifier = Modifier.size(height = size, width = expandableActionWidth),
-                    )
-                    EditCommentDefaults.ActionButton(
-                        imageVector = Icons.Outlined.Report,
-                        contentDescription = "举报用户",
-                        onClick = onClickReport,
-                        iconSize = iconSize,
-                        modifier = Modifier.size(height = size, width = expandableActionWidth),
                     )
                 }
 
-                // 最后一个按钮不要有 ripple effect，因为有动画，看起来比较奇怪
                 EditCommentDefaults.ActionButton(
-                    imageVector = Icons.Outlined.MoreHoriz,
-                    contentDescription = "展开更多评论功能",
+                    imageVector = Icons.Outlined.AddReaction,
+                    contentDescription = "添加表情",
+                    onClick = onClickReaction,
                     iconSize = iconSize,
-                    onClick = { actionRowExpanded = true },
-                    modifier = Modifier.size(height = size, width = size - expandableActionWidth),
-                    hasIndication = false,
-                )*/
+                    modifier = Modifier.size(size),
+                )
             }
         }
     }
@@ -286,5 +298,10 @@ object CommentDefaults {
         }
     }.let {
         UIRichText(it)
+    }
+
+    private fun String.bangumiReactionIdOrNull(): Int? {
+        if (!startsWith("bgm")) return null
+        return removePrefix("bgm").toIntOrNull()
     }
 }
