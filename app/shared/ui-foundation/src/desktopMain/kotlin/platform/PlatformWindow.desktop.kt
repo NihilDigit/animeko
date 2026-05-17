@@ -24,6 +24,7 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import me.him188.ani.app.platform.window.BasicWindowProc
 import me.him188.ani.app.platform.window.LayoutHitTestOwner
+import me.him188.ani.app.ui.foundation.InputMode
 import me.him188.ani.utils.platform.Platform
 import me.him188.ani.utils.platform.isWindows
 
@@ -42,6 +43,11 @@ actual open class PlatformWindow(
     val accentColor: Flow<Color>
         get() = windowsWindowProc.flatMapLatest {
             it?.accentColor ?: flowOf(Color.Unspecified)
+        }
+
+    actual val inputMode: Flow<InputMode?>
+        get() = windowsWindowProc.flatMapLatest {
+            it?.inputMode ?: flowOf(null)
         }
 
     private var isWindowsUndecoratedFullscreen by mutableStateOf(false)

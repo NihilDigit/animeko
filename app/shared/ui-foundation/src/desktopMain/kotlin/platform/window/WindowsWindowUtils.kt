@@ -464,6 +464,11 @@ internal interface ExtendedUser32 : User32 {
      */
     fun SetMenuDefaultItem(hMenu: HMENU, uItem: Int, fByPos: Boolean): Boolean
 
+    /**
+     * Retrieves the pointer device type for a WM_POINTER message pointer id.
+     */
+    fun GetPointerType(pointerId: UINT, pointerType: IntByReference): Boolean
+
     // Contains information about a menu item.
     @Suppress("SpellCheckingInspection", "unused")
     class MENUITEMINFO : Structure() {
@@ -562,6 +567,16 @@ internal interface ExtendedUser32 : User32 {
 
         // setting changed message
         const val WM_SETTINGCHANGE: Int = 0x001A
+
+        const val WM_POINTERUPDATE: Int = 0x0245
+        const val WM_POINTERDOWN: Int = 0x0246
+        const val WM_POINTERUP: Int = 0x0247
+
+        const val PT_POINTER: Int = 0x00000001
+        const val PT_TOUCH: Int = 0x00000002
+        const val PT_PEN: Int = 0x00000003
+        const val PT_MOUSE: Int = 0x00000004
+        const val PT_TOUCHPAD: Int = 0x00000005
 
         // window is deactivated
         const val WA_INACTIVE: Int = 0x00000000

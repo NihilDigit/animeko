@@ -24,6 +24,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOf
+import me.him188.ani.app.ui.foundation.InputMode
 
 
 actual class PlatformWindow(
@@ -42,6 +45,7 @@ actual class PlatformWindow(
 
     private var _isUndecoratedFullscreen: Boolean by mutableStateOf(initialUndecoratedFullscreen)
     actual val isUndecoratedFullscreen: Boolean get() = _isUndecoratedFullscreen
+    actual val inputMode: Flow<InputMode?> = flowOf(null)
 
     private val insetListener = View.OnApplyWindowInsetsListener { _, insets ->
         @Suppress("DEPRECATION")

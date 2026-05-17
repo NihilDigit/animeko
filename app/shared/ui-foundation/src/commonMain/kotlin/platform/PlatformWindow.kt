@@ -9,6 +9,9 @@
 
 package me.him188.ani.app.platform
 
+import kotlinx.coroutines.flow.Flow
+import me.him188.ani.app.ui.foundation.InputMode
+
 /**
  * 公共的 Window 抽象
  * @property isUndecoratedFullscreen 当前窗口是否处于全屏模式
@@ -22,6 +25,7 @@ expect class PlatformWindow {
 
     val isUndecoratedFullscreen: Boolean
     val deviceOrientation: DeviceOrientation
+    val inputMode: Flow<InputMode?>
 
     /**
      * 将窗口最大化. 注意, 这不是全屏.

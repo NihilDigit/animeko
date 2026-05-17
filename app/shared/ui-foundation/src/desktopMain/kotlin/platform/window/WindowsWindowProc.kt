@@ -38,11 +38,17 @@ import com.sun.jna.platform.win32.WinUser.SWP_SHOWWINDOW
 import com.sun.jna.platform.win32.WinUser.WM_SIZE
 import com.sun.jna.platform.win32.WinUser.WS_SYSMENU
 import com.sun.jna.platform.win32.WinUser.WindowProc
+import com.sun.jna.ptr.IntByReference
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import me.him188.ani.app.ui.foundation.InputMode
 import me.him188.ani.app.platform.window.ExtendedUser32.Companion.MFT_STRING
 import me.him188.ani.app.platform.window.ExtendedUser32.Companion.MIIM_STATE
+import me.him188.ani.app.platform.window.ExtendedUser32.Companion.PT_MOUSE
+import me.him188.ani.app.platform.window.ExtendedUser32.Companion.PT_PEN
+import me.him188.ani.app.platform.window.ExtendedUser32.Companion.PT_TOUCH
+import me.him188.ani.app.platform.window.ExtendedUser32.Companion.PT_TOUCHPAD
 import me.him188.ani.app.platform.window.ExtendedUser32.Companion.SC_CLOSE
 import me.him188.ani.app.platform.window.ExtendedUser32.Companion.SC_MOVE
 import me.him188.ani.app.platform.window.ExtendedUser32.Companion.SC_RESTORE
@@ -61,6 +67,9 @@ import me.him188.ani.app.platform.window.ExtendedUser32.Companion.WM_NCLBUTTONDO
 import me.him188.ani.app.platform.window.ExtendedUser32.Companion.WM_NCLBUTTONUP
 import me.him188.ani.app.platform.window.ExtendedUser32.Companion.WM_NCMOUSEMOVE
 import me.him188.ani.app.platform.window.ExtendedUser32.Companion.WM_NCRBUTTONUP
+import me.him188.ani.app.platform.window.ExtendedUser32.Companion.WM_POINTERDOWN
+import me.him188.ani.app.platform.window.ExtendedUser32.Companion.WM_POINTERUPDATE
+import me.him188.ani.app.platform.window.ExtendedUser32.Companion.WM_POINTERUP
 import me.him188.ani.app.platform.window.ExtendedUser32.Companion.WM_SETTINGCHANGE
 import me.him188.ani.app.platform.window.ExtendedUser32.MENUITEMINFO
 import me.him188.ani.app.ui.foundation.LocalPlatform
@@ -104,6 +113,9 @@ internal open class BasicWindowProc(
     private val _accentColor: MutableStateFlow<Color> = MutableStateFlow(currentAccentColor())
     val accentColor: StateFlow<Color> = _accentColor.asStateFlow()
 
+    private val _inputMode: MutableStateFlow<InputMode?> = MutableStateFlow(null)
+    val inputMode: StateFlow<InputMode?> = _inputMode.asStateFlow()
+
     private val defaultWindowProc =
         user32.SetWindowLongPtr(
             windowHandle,
@@ -117,6 +129,11 @@ internal open class BasicWindowProc(
         wParam: WinDef.WPARAM,
         lParam: WinDef.LPARAM
     ): LRESULT {
+        if (uMsg == WM_POINTERDOWN || uMsg == WM_POINTERUPDATE || uMsg == WM_POINTERUP) {
+            wParam.pointerId()
+                ?.let(::windowsPointerTypeToInputMode)
+                ?.let(_inputMode::tryEmit)
+        }
         if (uMsg == WM_SETTINGCHANGE) {
             val changedKey = Pointer(lParam.toLong()).getWideString(0)
             // Theme changed for color and darkTheme
@@ -150,6 +167,30 @@ internal open class BasicWindowProc(
         val blue = (value and 0xFF00)
         val red = (value and 0xFF0000).shr(16)
         return Color((alpha or green or blue or red).toInt())
+    }
+
+    private fun WinDef.WPARAM.pointerId(): Int? {
+        val pointerId = toLong().toInt() and 0xFFFF
+        val pointerTypeRef = IntByReference()
+        return if (user32.GetPointerType(UINT(pointerId.toLong()), pointerTypeRef)) {
+            pointerTypeRef.value
+        } else {
+            null
+        }
+    }
+
+    private fun windowsPointerTypeToInputMode(pointerType: Int): InputMode? {
+        return when (pointerType) {
+            // A pen acts on screen coordinates directly, so video controls should
+            // follow touch-style gestures instead of hover/wheel-oriented mouse gestures.
+            PT_TOUCH, PT_PEN -> InputMode.Touch
+
+            // Precision touchpads are indirect pointer devices. Treat them like
+            // mice so hover, wheel, and keyboard-friendly desktop controls remain active.
+            PT_MOUSE, PT_TOUCHPAD -> InputMode.Mouse
+
+            else -> null
+        }
     }
 
     override fun close() {

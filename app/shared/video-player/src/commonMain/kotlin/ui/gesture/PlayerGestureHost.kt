@@ -83,7 +83,8 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import me.him188.ani.app.tools.rememberUiMonoTasker
-import me.him188.ani.app.ui.foundation.LocalPlatform
+import me.him188.ani.app.ui.foundation.InputMode
+import me.him188.ani.app.ui.foundation.LocalInputMode
 import me.him188.ani.app.ui.foundation.animation.AniAnimatedVisibility
 import me.him188.ani.app.ui.foundation.effects.ComposeKey
 import me.him188.ani.app.ui.foundation.effects.onKey
@@ -105,7 +106,6 @@ import me.him188.ani.app.videoplayer.ui.gesture.SwipeSeekerState.Companion.swipe
 import me.him188.ani.app.videoplayer.ui.progress.PlayerProgressSliderState
 import me.him188.ani.app.videoplayer.ui.rememberAlwaysOnRequester
 import me.him188.ani.app.videoplayer.ui.top.needWorkaroundForFocusManager
-import me.him188.ani.utils.platform.Platform
 import org.openani.mediamp.MediampPlayer
 import org.openani.mediamp.features.AudioLevelController
 import kotlin.math.absoluteValue
@@ -368,10 +368,10 @@ fun GestureIndicator(
 }
 
 @Stable
-val Platform.mouseFamily: GestureFamily
+val InputMode.gestureFamily: GestureFamily
     get() = when (this) {
-        is Platform.Desktop -> GestureFamily.MOUSE
-        is Platform.Android, is Platform.Ios -> GestureFamily.TOUCH
+        InputMode.Mouse -> GestureFamily.MOUSE
+        InputMode.Touch -> GestureFamily.TOUCH
     }
 
 @Immutable
@@ -443,7 +443,7 @@ fun PlayerGestureHost(
     brightnessController: LevelController,
     playbackSpeedControllerState: PlaybackSpeedControllerState?,
     modifier: Modifier = Modifier,
-    family: GestureFamily = LocalPlatform.current.mouseFamily,
+    family: GestureFamily = LocalInputMode.current.gestureFamily,
     onTogglePauseResume: () -> Unit = {},
     onToggleFullscreen: () -> Unit = {},
     onExitFullscreen: () -> Unit = {},

@@ -16,11 +16,14 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -50,14 +53,19 @@ import me.him188.ani.app.navigation.NavRoutes
 import me.him188.ani.app.tools.LocalTimeFormatter
 import me.him188.ani.app.tools.TimeFormatter
 import me.him188.ani.app.ui.foundation.AbstractViewModel
+import me.him188.ani.app.ui.foundation.InputMode
 import me.him188.ani.app.ui.foundation.LocalImageLoader
+import me.him188.ani.app.ui.foundation.LocalInputMode
 import me.him188.ani.app.ui.foundation.LocalPlatform
 import me.him188.ani.app.ui.foundation.LocalPlatformFontFamily
 import me.him188.ani.app.ui.foundation.createDefaultImageLoader
+import me.him188.ani.app.ui.foundation.defaultInputMode
 import me.him188.ani.app.ui.foundation.ifThen
+import me.him188.ani.app.ui.foundation.layout.LocalPlatformWindow
 import me.him188.ani.app.ui.foundation.rememberPlatformFontFamily
 import me.him188.ani.app.ui.foundation.theme.AniTheme
 import me.him188.ani.app.ui.foundation.theme.LocalThemeSettings
+import me.him188.ani.app.ui.foundation.trackInputMode
 import me.him188.ani.app.ui.lang.LocaleZhCN
 import me.him188.ani.utils.ktor.ScopedHttpClient
 import me.him188.ani.utils.platform.Platform
@@ -191,28 +199,44 @@ fun AniApp(
     val viewModel = viewModel { AniAppViewModel() }
     // 主题读好再进入 APP, 防止黑白背景闪烁
     val appState = viewModel.appState.collectAsStateWithLifecycle(null).value ?: return
+    var inputMode by remember { mutableStateOf(currentPlatform().defaultInputMode) }
+    val setInputMode: (InputMode) -> Unit = { mode ->
+        inputMode = mode
+    }
 
     CompositionLocalProvider(
 //        LocalImageLoader provides imageLoader,
         LocalImageLoader provides rememberImageLoader(appState.imageLoaderClient),
+        LocalInputMode provides inputMode,
         LocalTimeFormatter provides remember { TimeFormatter() },
         LocalThemeSettings provides appState.themeSettings,
         LocalPlatformFontFamily provides rememberPlatformFontFamily(appState.platformFont),
     ) {
         val focusManager by rememberUpdatedState(LocalFocusManager.current)
         val keyboard by rememberUpdatedState(LocalSoftwareKeyboardController.current)
+        val platformWindow = LocalPlatformWindow.current
+
+        LaunchedEffect(platformWindow) {
+            platformWindow.inputMode.collect { mode ->
+                if (mode != null) {
+                    setInputMode(mode)
+                }
+            }
+        }
 
         AniTheme {
             Box(
-                modifier = modifier.ifThen(LocalPlatform.current.isMobile()) {
-                    focusable(false).clickable(
-                        remember { MutableInteractionSource() },
-                        null,
-                    ) {
-                        keyboard?.hide()
-                        focusManager.clearFocus()
-                    }
-                },
+                modifier = modifier
+                    .trackInputMode(setInputMode)
+                    .ifThen(LocalPlatform.current.isMobile()) {
+                        focusable(false).clickable(
+                            remember { MutableInteractionSource() },
+                            null,
+                        ) {
+                            keyboard?.hide()
+                            focusManager.clearFocus()
+                        }
+                    },
             ) {
                 Box {
                     for (composable in appState.overlayComposables) {

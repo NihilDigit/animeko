@@ -16,6 +16,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.uikit.LocalUIViewController
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOf
+import me.him188.ani.app.ui.foundation.InputMode
 import platform.Foundation.NSNotificationCenter
 import platform.UIKit.UIDevice
 import platform.UIKit.UIDeviceOrientation
@@ -30,6 +33,7 @@ actual class PlatformWindow(
 
     private var _isUndecoratedFullscreen by mutableStateOf(false)
     actual val isUndecoratedFullscreen: Boolean get() = _isUndecoratedFullscreen
+    actual val inputMode: Flow<InputMode?> = flowOf(null)
 
     private var orientationObserver: NSObjectProtocol? = null
 
@@ -83,4 +87,3 @@ fun rememberPlatformWindow(): PlatformWindow {
     }
     return platformWindow
 }
-
