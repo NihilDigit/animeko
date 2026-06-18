@@ -31,6 +31,8 @@
     enabled: true,
     scanTimer: 0,
     selectedRecordKey: "",
+    selectedGroupByRecord: {},
+    showSuspectGroupsOnly: true,
     previewHls: null,
     previewManifestUrl: "",
     previewResourceUrls: [],
@@ -625,6 +627,168 @@
     return records[records.length - 1];
   }
 
+  function segmentGroups(record) {
+    const groups = [];
+    for (const segment of record?.segments || []) {
+      let group = groups.find((item) => item.index === segment.groupIndex);
+      if (!group) {
+        group = {
+          index: segment.groupIndex,
+          segments: [],
+          duration: 0,
+          start: segment.index,
+          end: segment.index,
+          hosts: new Set(),
+          pathRoots: new Set(),
+        };
+        groups.push(group);
+      }
+      group.segments.push(segment);
+      group.duration += segment.duration || 0;
+      group.end = segment.index;
+      try {
+        const url = new URL(segment.uri);
+        group.hosts.add(url.host);
+        group.pathRoots.add(url.pathname.split("/").slice(0, -1).join("/"));
+      } catch {}
+    }
+    return groups.map((group) => ({
+      ...group,
+      count: group.segments.length,
+      duration: Number(group.duration.toFixed(3)),
+      hosts: Array.from(group.hosts),
+      pathRoots: Array.from(group.pathRoots),
+    }));
+  }
+
+  function groupFileSignature(group) {
+    return group.segments
+      .map((segment) => String(segment.fileName || "").split("?", 1)[0])
+      .join("|");
+  }
+
+  function numericModel(segments) {
+    const values = [];
+    for (const segment of segments || []) {
+      const name = String(segment.fileName || "").split("?", 1)[0];
+      const match = name.match(/^(.*?)(\d{1,7})\.ts$/);
+      if (match) values.push({ prefix: match[1], number: Number(match[2]) });
+    }
+    if (!values.length) return "";
+
+    const prefixCounts = new Map();
+    for (const value of values) {
+      prefixCounts.set(value.prefix, (prefixCounts.get(value.prefix) || 0) + 1);
+    }
+    let prefix = "";
+    let prefixCount = 0;
+    for (const [candidate, count] of prefixCounts) {
+      if (count > prefixCount) {
+        prefix = candidate;
+        prefixCount = count;
+      }
+    }
+    if (prefixCount / segments.length < 0.8) return "";
+
+    const numbers = values.filter((value) => value.prefix === prefix).map((value) => value.number);
+    const deltaCounts = new Map();
+    for (let index = 1; index < numbers.length; index += 1) {
+      const delta = numbers[index] - numbers[index - 1];
+      deltaCounts.set(delta, (deltaCounts.get(delta) || 0) + 1);
+    }
+    let bestDelta = null;
+    let bestDeltaCount = 0;
+    for (const [delta, count] of deltaCounts) {
+      if (count > bestDeltaCount) {
+        bestDelta = delta;
+        bestDeltaCount = count;
+      }
+    }
+    if (bestDelta !== 1 || bestDeltaCount / Math.max(1, numbers.length - 1) < 0.5) return "";
+    return prefix;
+  }
+
+  function trailingNum(name, prefix) {
+    if (!prefix) return null;
+    const clean = String(name || "").split("?", 1)[0];
+    if (!clean.startsWith(prefix) || !clean.endsWith(".ts")) return null;
+    const suffix = clean.slice(prefix.length, -3);
+    return /^\d+$/.test(suffix) ? Number(suffix) : null;
+  }
+
+  function groupLabelCounts(record, group) {
+    const labels = record.labels || {};
+    return group.segments.reduce((acc, segment) => {
+      const value = labels[String(segment.index)];
+      const label = typeof value === "string" ? value : value?.label;
+      if (label) acc[label] = (acc[label] || 0) + 1;
+      return acc;
+    }, {});
+  }
+
+  function suspiciousGroupReasons(record, group, groups, signatureCounts) {
+    const reasons = [];
+    const groupPosition = groups.indexOf(group);
+    const dense = groups.length >= 20 || Boolean(record?.segments?.length && groups.length / record.segments.length > 0.08);
+    const repeatShort = (signatureCounts.get(groupFileSignature(group)) || 0) > 1 && group.count <= 12 && group.duration <= 45;
+    const short = group.count <= 12 || group.duration <= 45;
+    const paths = group.segments.map((segment) => {
+      try {
+        return new URL(segment.uri).pathname.toLowerCase();
+      } catch {
+        return String(segment.uri || "").toLowerCase();
+      }
+    }).join(" ");
+    const strongPath = ["adjump", "/ad/", "/ads/", "advert"].some((token) => paths.includes(token));
+    const prev = groups[groupPosition - 1];
+    const next = groups[groupPosition + 1];
+    const sandwiched = Boolean(
+      prev &&
+      next &&
+      prev.duration >= 60 &&
+      next.duration >= 60 &&
+      group.duration <= 45 &&
+      group.count >= 2
+    );
+    const lowDensityShort = !dense && short && group.count >= 2;
+    const denseTiny = dense && (group.count <= 3 || group.duration <= 12) && prev && next;
+
+    let sequenceIsland = false;
+    const seqPrefix = dense ? numericModel(record?.segments || []) : "";
+    if (dense && seqPrefix) {
+      const names = group.segments.map((segment) => String(segment.fileName || "").split("?", 1)[0]);
+      const numbers = names.map((name) => trailingNum(name, seqPrefix));
+      const first = numbers[0];
+      const last = numbers[numbers.length - 1];
+      const previous = group.start > 0
+        ? trailingNum(record.segments[group.start - 1]?.fileName, seqPrefix)
+        : null;
+      const following = group.end + 1 < (record.segments || []).length
+        ? trailingNum(record.segments[group.end + 1]?.fileName, seqPrefix)
+        : null;
+      const linearIsland = numbers.every((number) => number != null) &&
+        numbers.every((number, index) => index === 0 || number === numbers[index - 1] + 1);
+      sequenceIsland = previous != null &&
+        following != null &&
+        first != null &&
+        last != null &&
+        linearIsland &&
+        following === previous + 1 &&
+        Math.abs(first - previous) > 1000 &&
+        Math.abs(last - following) > 1000 &&
+        group.count >= 2 &&
+        short;
+    }
+
+    if (strongPath) reasons.push("strong_path");
+    if (repeatShort) reasons.push("repeat_short");
+    if (sandwiched) reasons.push("sandwiched_short");
+    if (lowDensityShort) reasons.push("low_density_short");
+    if (sequenceIsland) reasons.push("sequence_island");
+    if (denseTiny) reasons.push("dense_tiny");
+    return Array.from(new Set(reasons));
+  }
+
   function setSegmentLabel(key, segmentIndex, label) {
     const record = findRecordByKey(key);
     if (!record) return;
@@ -1010,14 +1174,100 @@
 
     if (selected) {
       const key = `${selected.frameId}:${selected.id}`;
+      const groups = segmentGroups(selected);
+      const signatureCounts = groups.reduce((acc, group) => {
+        const signature = groupFileSignature(group);
+        acc.set(signature, (acc.get(signature) || 0) + 1);
+        return acc;
+      }, new Map());
+      const groupsWithReasons = groups.map((group) => ({
+        ...group,
+        reasons: suspiciousGroupReasons(selected, group, groups, signatureCounts),
+        labels: groupLabelCounts(selected, group),
+      }));
+      const suspectGroups = groupsWithReasons.filter((group) => group.reasons.length);
+      const visibleGroups = state.showSuspectGroupsOnly && suspectGroups.length ? suspectGroups : groupsWithReasons;
+      if (!visibleGroups.some((group) => group.index === state.selectedGroupByRecord[key])) {
+        state.selectedGroupByRecord[key] = (visibleGroups[0] || groupsWithReasons[0])?.index ?? 0;
+      }
+      const selectedGroup = groupsWithReasons.find((group) => group.index === state.selectedGroupByRecord[key])
+        || visibleGroups[0]
+        || groupsWithReasons[0];
+
       const segmentTitle = document.createElement("div");
       segmentTitle.style.cssText = "margin:8px 0 4px;font-weight:700";
-      segmentTitle.textContent = `segments for #${selected.id}`;
+      segmentTitle.textContent = `groups for #${selected.id}`;
       panel.appendChild(segmentTitle);
+
+      const groupToolbar = document.createElement("div");
+      groupToolbar.style.cssText = "display:flex;flex-wrap:wrap;gap:6px;margin:6px 0";
+      const groupPosition = visibleGroups.findIndex((group) => group.index === selectedGroup?.index);
+      for (const [label, action] of [
+        [state.showSuspectGroupsOnly ? "show all groups" : "suspects only", () => {
+          state.showSuspectGroupsOnly = !state.showSuspectGroupsOnly;
+          renderPanel();
+        }],
+        ["prev group", () => {
+          const nextIndex = Math.max(0, groupPosition - 1);
+          state.selectedGroupByRecord[key] = visibleGroups[nextIndex]?.index ?? selectedGroup?.index ?? 0;
+          renderPanel();
+        }],
+        ["next group", () => {
+          const nextIndex = Math.min(visibleGroups.length - 1, groupPosition + 1);
+          state.selectedGroupByRecord[key] = visibleGroups[nextIndex]?.index ?? selectedGroup?.index ?? 0;
+          renderPanel();
+        }],
+      ]) {
+        const btn = document.createElement("button");
+        btn.textContent = label;
+        btn.style.cssText = "font:12px system-ui,sans-serif;padding:3px 6px;cursor:pointer";
+        btn.addEventListener("click", action);
+        groupToolbar.appendChild(btn);
+      }
+      panel.appendChild(groupToolbar);
+
+      const groupList = document.createElement("div");
+      groupList.style.cssText = "display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px;margin-bottom:8px";
+      for (const group of visibleGroups) {
+        const btn = document.createElement("button");
+        const reasons = group.reasons.length ? ` · ${group.reasons.join("+")}` : "";
+        const labels = Object.entries(group.labels).map(([label, count]) => `${label}:${count}`).join(" ");
+        btn.textContent = `g${group.index} #${group.start}-${group.end} ${group.count}seg ${group.duration.toFixed(1)}s${reasons}${labels ? ` · ${labels}` : ""}`;
+        btn.title = [
+          `hosts: ${group.hosts.join(", ")}`,
+          `roots: ${group.pathRoots.join(", ")}`,
+          `first: ${group.segments[0]?.fileName || ""}`,
+          `last: ${group.segments[group.segments.length - 1]?.fileName || ""}`,
+        ].join("\n");
+        btn.style.cssText = [
+          "font:12px system-ui,sans-serif",
+          "padding:5px 6px",
+          "cursor:pointer",
+          "overflow:hidden",
+          "text-overflow:ellipsis",
+          "white-space:nowrap",
+          "text-align:left",
+          group.index === selectedGroup?.index ? "background:#31516f;color:#fff;border:1px solid #7fb1df" : "",
+          group.reasons.length ? "box-shadow:inset 3px 0 #ffb020" : "",
+        ].join(";");
+        btn.addEventListener("click", () => {
+          state.selectedGroupByRecord[key] = group.index;
+          renderPanel();
+        });
+        groupList.appendChild(btn);
+      }
+      panel.appendChild(groupList);
+
+      const selectedGroupTitle = document.createElement("div");
+      selectedGroupTitle.style.cssText = "margin:8px 0 4px;font-weight:700";
+      selectedGroupTitle.textContent = selectedGroup
+        ? `segments in g${selectedGroup.index}: #${selectedGroup.start}-${selectedGroup.end}, ${selectedGroup.count} segment(s), ${selectedGroup.duration.toFixed(3)}s`
+        : "segments";
+      panel.appendChild(selectedGroupTitle);
 
       const segmentList = document.createElement("div");
       segmentList.style.cssText = "display:grid;gap:3px";
-      for (const segment of selected.segments) {
+      for (const segment of selectedGroup?.segments || []) {
         const labelValue = selected.labels?.[String(segment.index)];
         const label = typeof labelValue === "string" ? labelValue : labelValue?.label || "";
         const row = document.createElement("div");
@@ -1104,7 +1354,23 @@
     GM_registerMenuCommand("Animeko HLS: copy JSONL", copyJsonl);
   }
 
+  function exposeDebugApi() {
+    PAGE.__animekoHlsDumper = {
+      add(url, reason = "manual.add") {
+        return enqueueCandidate(url, reason);
+      },
+      scan: scanKnownPlaces,
+      show() {
+        state.panelOpen = true;
+        renderPanel();
+      },
+      exportJson,
+      exportJsonl,
+    };
+  }
+
   function boot() {
+    exposeDebugApi();
     installMenu();
     installFrameMessaging();
     installNetworkHooks();
