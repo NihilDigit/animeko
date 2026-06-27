@@ -16,13 +16,13 @@ import androidx.paging.map
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import me.him188.ani.app.data.models.preference.NsfwMode
 import me.him188.ani.app.data.models.subject.SubjectInfo
@@ -70,42 +70,46 @@ class SearchViewModel(
 
     private val nsfwSettingFlow = settingsRepository.uiSettings.flow
         .map { it.searchSettings.nsfwMode }
-        .stateIn(backgroundScope, SharingStarted.Lazily, NsfwMode.HIDE)
 
     private val searchHistoryPager = searchHistoryRepository.getHistoryPager().cachedIn(backgroundScope)
     private val searchState = PagingSearchState(
         createPager = { scope ->
-            val rawQuery = queryFlow.value.normalized()
-            val explicitR18 = rawQuery.tags?.contains("R18") == true
-            val query = rawQuery.copy(
-                nsfw = when {
-                    explicitR18 -> true
-                    nsfwSettingFlow.value == NsfwMode.HIDE -> false
-                    else -> null
-                },
-            )
+            flow {
+                val nsfwMode = nsfwSettingFlow.first()
+                val rawQuery = queryFlow.value.normalized()
+                val explicitR18 = rawQuery.tags?.contains("R18") == true
+                val query = rawQuery.copy(
+                    nsfw = when {
+                        explicitR18 -> true
+                        nsfwMode == NsfwMode.HIDE -> false
+                        else -> null
+                    },
+                )
 
-            subjectSearchRepository.searchSubjects(
-                searchQuery = query,
-                ignoreDoneAndDropped = {
-                    settingsRepository.uiSettings.flow.map {
-                        it.searchSettings.ignoreDoneAndDroppedSubjects
-                    }.first()
-                },
-            ).combine(nsfwSettingFlow) { data, nsfwMode ->
-                data.map { subject ->
-                    SubjectPreviewItemInfo.compute(
-                        subject.subjectInfo,
-                        subject.mainEpisodeCount,
-                        nsfwModeSettings = if (explicitR18) {
-                            NsfwMode.DISPLAY
-                        } else {
-                            nsfwMode
+                emitAll(
+                    subjectSearchRepository.searchSubjects(
+                        searchQuery = query,
+                        ignoreDoneAndDropped = {
+                            settingsRepository.uiSettings.flow.map {
+                                it.searchSettings.ignoreDoneAndDroppedSubjects
+                            }.first()
                         },
-                        relatedPersonList = subject.lightSubjectRelations.lightRelatedPersonInfoList,
-                        characters = subject.lightSubjectRelations.lightRelatedCharacterInfoList,
-                    )
-                }
+                    ).combine(nsfwSettingFlow) { data, currentNsfwMode ->
+                        data.map { subject ->
+                            SubjectPreviewItemInfo.compute(
+                                subject.subjectInfo,
+                                subject.mainEpisodeCount,
+                                nsfwModeSettings = if (explicitR18) {
+                                    NsfwMode.DISPLAY
+                                } else {
+                                    currentNsfwMode
+                                },
+                                relatedPersonList = subject.lightSubjectRelations.lightRelatedPersonInfoList,
+                                characters = subject.lightSubjectRelations.lightRelatedCharacterInfoList,
+                            )
+                        }
+                    },
+                )
             }.cachedIn(scope)
         },
         backgroundScope = backgroundScope,
