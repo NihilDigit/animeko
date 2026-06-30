@@ -350,7 +350,8 @@ function subscription(origin) {
           version: 2,
           arguments: {
             name: "ANi Open",
-            description: "open.ani.rip for Animeko.",
+            description:
+              "ANi Open 静态索引源。当前索引版本 202606301004，覆盖 2022-4 至 2026-4（ANi 2022-04 起稳定命名格式）；少数无法安全映射的长尾标题会被排除。",
             iconUrl: `${origin}/favicon.ico`,
             searchConfig: {
               searchUrl: `${origin}/search?wd={keyword}`,
