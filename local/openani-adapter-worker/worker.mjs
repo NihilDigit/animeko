@@ -587,6 +587,7 @@ function normalizeIndexKey(value) {
     .replace(/\p{Cf}/gu, "")
     .replace(/幺/g, "么")
     .replace(/坯/g, "坏")
+    .replace(/砲/g, "炮")
     .replace(/智慧型/g, "智能")
     .replace(/钢弹/g, "高达")
     .replace(/编/g, "篇")

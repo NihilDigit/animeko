@@ -8,10 +8,13 @@ const BGM_API = "https://api.bgm.tv";
 const BGM_USER_AGENT = "spencer/animeko-openani-adapter-builder/0.1 (https://github.com/open-ani/ani)";
 const FOLDER_MIME = "application/vnd.google-apps.folder";
 const VERSION = process.env.OPENANI_INDEX_VERSION || new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 12);
-const START_SEASON = "2022-4";
-const END_SEASON = "2026-4";
+const START_SEASON = process.env.OPENANI_INDEX_START_SEASON || "2019-1";
+const END_SEASON = process.env.OPENANI_INDEX_END_SEASON || "";
+const ARCHIVE_SEASON = "ANi";
 const SEARCH_SHARD_PREFIX_LENGTH = 1;
 const ANI_FOLDER_CONCURRENCY = 6;
+const REQUEST_TIMEOUT_MS = 30_000;
+const ANI_FOLDER_MAX_DEPTH = 4;
 const SIMILARITY_EPISODE_STRONG_SCORE = 0.23;
 const SIMILARITY_EPISODE_STRONG_MARGIN = 0.16;
 const SIMILARITY_SEASON_EPISODE_SCORE = 0.22;
@@ -36,7 +39,9 @@ const root = path.resolve(import.meta.dirname, "..");
 const cacheDir = path.join(root, "cache", "build-index");
 const outDir = path.join(root, "dist-index");
 
-const seasons = listSeasons(START_SEASON, END_SEASON);
+const rootListing = await fetchAniRootListing();
+const seasons = discoverSeasons(rootListing, START_SEASON, END_SEASON);
+const includeArchive = hasAniArchive(rootListing);
 await fs.mkdir(cacheDir, { recursive: true });
 await fs.rm(outDir, { recursive: true, force: true });
 await fs.mkdir(path.join(outDir, "season"), { recursive: true });
@@ -48,7 +53,7 @@ const allSearchEntries = new Map();
 const allKeywordEntries = new Map();
 const reports = [];
 const stats = {
-  seasons: seasons.length,
+  seasons: seasons.length + (includeArchive ? 1 : 0),
   aniSubjects: 0,
   matchedSubjects: 0,
   unmatchedSubjects: 0,
@@ -62,6 +67,7 @@ const globalBgmSubjectsById = new Map();
 const keywordProfileCache = new Map();
 
 for (const season of seasons) {
+  console.error(`[bgm] ${season}`);
   const bgmSubjects = await fetchBgmSeasonSubjects(season);
   bgmSubjectsBySeason.set(season, bgmSubjects);
   for (const subject of bgmSubjects) {
@@ -105,8 +111,99 @@ for (const season of seasons) {
         match: match.diagnostics,
       };
       if (candidates.length > 1) {
-        stats.ambiguousSubjects += 1;
-        seasonReport.ambiguous.push(item);
+        stats.excludedSubjects += 1;
+        seasonReport.excluded.push({ ...item, exclusion: classifyAmbiguous(item) });
+      } else {
+        const exclusion = classifyUnmatched(item);
+        if (exclusion) {
+          stats.excludedSubjects += 1;
+          seasonReport.excluded.push({ ...item, exclusion });
+        } else {
+          stats.unmatchedSubjects += 1;
+          seasonReport.unmatched.push(item);
+        }
+      }
+      seasonSubjects[titleKey] = toSeasonSubject(subject, null);
+      addSearchEntry(allSearchEntries, titleKey, season, titleKey, subject.aniTitle, "aniTitle");
+      addKeywordEntries(allKeywordEntries, subject.aniTitle, season, titleKey, subject.aniTitle, null, "aniTitle");
+      continue;
+    }
+
+    const bgm = candidates[0];
+    stats.matchedSubjects += 1;
+    seasonReport.matched.push({
+      aniTitle: subject.aniTitle,
+      titleKey,
+      bgm: toBgmSummary(bgm),
+      searchKey: bgm.name_cn || subject.aniTitle,
+      match: match.diagnostics,
+    });
+    seasonSubjects[titleKey] = toSeasonSubject(subject, bgm);
+
+    if (bgm.name_cn) {
+      addSearchEntry(allSearchEntries, normalizeKey(bgm.name_cn), season, titleKey, subject.aniTitle, "bgmNameCn");
+      addKeywordEntries(allKeywordEntries, bgm.name_cn, season, titleKey, subject.aniTitle, bgm, "bgmNameCn");
+    }
+    addSearchEntry(allSearchEntries, titleKey, season, titleKey, subject.aniTitle, "aniTitle");
+    addKeywordEntries(allKeywordEntries, subject.aniTitle, season, titleKey, subject.aniTitle, bgm, "aniTitle");
+  }
+
+  reports.push(seasonReport);
+  await writeJson(path.join(outDir, "season", `${season}.json`), {
+    version: VERSION,
+    season,
+    generatedAt: new Date().toISOString(),
+    subjects: seasonSubjects,
+  });
+  await writeJson(path.join(outDir, "reports", `${season}.json`), seasonReport);
+  console.error(
+    `[season] ${season}: ani=${seasonReport.aniSubjectCount} bgm=${seasonReport.bgmSubjectCount} ` +
+      `matched=${seasonReport.matched.length} excluded=${seasonReport.excluded.length} ` +
+      `unmatched=${seasonReport.unmatched.length} ambiguous=${seasonReport.ambiguous.length}`,
+  );
+}
+
+if (includeArchive) {
+  const season = ARCHIVE_SEASON;
+  console.error(`[season] ${season}`);
+  const aniSubjects = await fetchAniSeasonSubjects(season);
+  const seasonSubjects = {};
+  const seasonReport = {
+    season,
+    aniSubjectCount: aniSubjects.length,
+    bgmSubjectCount: 0,
+    matched: [],
+    unmatched: [],
+    excluded: [],
+    ambiguous: [],
+  };
+
+  for (const [index, subject] of aniSubjects.entries()) {
+    console.error(`[archive] ${index + 1}/${aniSubjects.length} ${subject.aniTitle}`);
+    const titleKey = normalizeKey(subject.aniTitle);
+    const bgmSubjects = await fetchBgmSearchSubjects(subject.aniTitle);
+    seasonReport.bgmSubjectCount += bgmSubjects.length;
+    for (const bgm of bgmSubjects) {
+      if (bgm?.id) globalBgmSubjectsById.set(bgm.id, bgm);
+    }
+    const aliasMap = buildBgmAliasMap(bgmSubjects);
+    const keywordStats = buildKeywordStats(bgmSubjects);
+    const match = matchBgmCandidates(subject.aniTitle, aliasMap, bgmSubjects, globalAliasMap, subject.episodes.length, keywordStats);
+    const candidates = match.candidates;
+    stats.aniSubjects += 1;
+    stats.episodes += subject.episodes.length;
+
+    if (candidates.length !== 1) {
+      const item = {
+        aniTitle: subject.aniTitle,
+        titleKey,
+        episodeCount: subject.episodes.length,
+        candidates: candidates.map(toBgmSummary),
+        match: match.diagnostics,
+      };
+      if (candidates.length > 1) {
+        stats.excludedSubjects += 1;
+        seasonReport.excluded.push({ ...item, exclusion: classifyAmbiguous(item) });
       } else {
         const exclusion = classifyUnmatched(item);
         if (exclusion) {
@@ -173,7 +270,8 @@ const manifest = {
   source: {
     aniOrigin: OPENANI_ORIGIN,
     startSeason: START_SEASON,
-    endSeason: END_SEASON,
+    endSeason: seasons.at(-1) || "",
+    includeArchive,
   },
   kv: {
     manifestKey: "openani:v1:manifest",
@@ -182,7 +280,7 @@ const manifest = {
     seasonKeyPattern: `openani:v1:season:${VERSION}:<season>`,
     searchShardPrefixLength: SEARCH_SHARD_PREFIX_LENGTH,
   },
-  seasons,
+  seasons: includeArchive ? [...seasons, ARCHIVE_SEASON] : seasons,
   searchShards: [...shards.keys()].sort(),
   keywordShards: [...keywordShards.keys()].sort(),
   stats: {
@@ -223,7 +321,7 @@ async function fetchAniSeasonSubjects(season) {
     if (file.mimeType === FOLDER_MIME) {
       const folderTitle = cleanupTitle(file.name);
       const childPath = `/${season}/${file.name}/`;
-      folders.push({ folderTitle, childPath, cacheName: `ani-${season}-${hash(file.name)}.json` });
+      folders.push({ subjectTitle: folderTitle, childPath, depth: 1 });
       continue;
     }
 
@@ -232,12 +330,7 @@ async function fetchAniSeasonSubjects(season) {
     addEpisode(groups, parsed.subject, season, `/${season}/${file.name}`, file, parsed);
   }
 
-  await mapLimit(folders, ANI_FOLDER_CONCURRENCY, async ({ folderTitle, childPath, cacheName }) => {
-    const child = await cachedJson(cacheName, () => openaniPost(childPath));
-    for (const childFile of child.files || []) {
-      addEpisode(groups, folderTitle, season, `${childPath}${childFile.name}`, childFile);
-    }
-  });
+  await mapLimit(folders, ANI_FOLDER_CONCURRENCY, (folder) => collectAniFolderEpisodes(groups, season, folder));
 
   return [...groups.values()]
     .map((subject) => ({
@@ -247,6 +340,30 @@ async function fetchAniSeasonSubjects(season) {
     }))
     .filter((subject) => subject.episodes.length)
     .sort((a, b) => a.aniTitle.localeCompare(b.aniTitle));
+}
+
+async function collectAniFolderEpisodes(groups, season, folder) {
+  const child = await cachedJson(`ani-${season}-${hash(folder.childPath)}.json`, () => openaniPost(folder.childPath));
+  const nested = [];
+  for (const childFile of child.files || []) {
+    const childPath = `${folder.childPath}${childFile.name}`;
+    if (childFile.mimeType === FOLDER_MIME) {
+      if (folder.depth < ANI_FOLDER_MAX_DEPTH) {
+        nested.push({
+          subjectTitle: folder.subjectTitle,
+          childPath: `${childPath}/`,
+          depth: folder.depth + 1,
+        });
+      }
+      continue;
+    }
+    addEpisode(groups, folder.subjectTitle, season, childPath, childFile);
+  }
+  await mapLimit(nested, ANI_FOLDER_CONCURRENCY, (item) => collectAniFolderEpisodes(groups, season, item));
+}
+
+async function fetchAniRootListing() {
+  return cachedJson("ani-root.json", () => openaniPost("/"));
 }
 
 async function fetchBgmSeasonSubjects(season) {
@@ -266,6 +383,20 @@ async function fetchBgmSeasonSubjects(season) {
     }
   }
   return [...byId.values()];
+}
+
+async function fetchBgmSearchSubjects(title) {
+  const pages = [];
+  for (const query of unique([title, toSimplified(title)])) {
+    pages.push(await cachedJson(`bgm-search-${hash(query)}.json`, () => bgmSearchSubjects(query)));
+  }
+  const ids = unique(pages.flatMap((page) => (page.data || []).map((item) => item?.id).filter(Boolean))).slice(0, 5);
+  const subjects = [];
+  for (const id of ids) {
+    subjects.push(await cachedJson(`bgm-subject-${id}.json`, () => bgmGetSubject(id)));
+    await sleep(120);
+  }
+  return subjects;
 }
 
 function buildBgmAliasMap(subjects) {
@@ -300,17 +431,30 @@ function bgmAliases(subject) {
 function matchBgmCandidates(aniTitle, aliasMap, bgmSubjects, globalAliasMap, episodeCount, keywordStats) {
   const strong = uniqueCandidates(titleMatchKeys(aniTitle, { loose: false }).flatMap((key) => aliasMap.get(key) || []));
   if (strong.length === 1) return { candidates: strong, diagnostics: { strategy: "strong" } };
-  if (strong.length > 1) return { candidates: strong, diagnostics: { strategy: "strongAmbiguous" } };
+  if (strong.length > 1) {
+    const disambiguated = disambiguateCandidates(aniTitle, strong, episodeCount);
+    if (disambiguated) return disambiguatedResult("strong", disambiguated);
+    return { candidates: strong, diagnostics: { strategy: "strongAmbiguous" } };
+  }
 
   const strongIds = new Set(strong.map((candidate) => candidate.id));
   const loose = uniqueCandidates(titleMatchKeys(aniTitle, { loose: true })
     .flatMap((key) => aliasMap.get(key) || [])
     .filter((candidate) => !strongIds.has(candidate.id)));
-  if (loose.length) return { candidates: loose, diagnostics: { strategy: "loose" } };
+  if (loose.length === 1) return { candidates: loose, diagnostics: { strategy: "loose" } };
+  if (loose.length > 1) {
+    const disambiguated = disambiguateCandidates(aniTitle, loose, episodeCount);
+    if (disambiguated) return disambiguatedResult("loose", disambiguated);
+    return { candidates: loose, diagnostics: { strategy: "looseAmbiguous" } };
+  }
 
   const globalStrong = uniqueCandidates(titleMatchKeys(aniTitle, { loose: false }).flatMap((key) => globalAliasMap.get(key) || []));
   if (globalStrong.length === 1) return { candidates: globalStrong, diagnostics: { strategy: "globalStrong" } };
-  if (globalStrong.length > 1) return { candidates: [], diagnostics: { strategy: "globalStrongRejected", candidates: globalStrong.map(toBgmSummary) } };
+  if (globalStrong.length > 1) {
+    const disambiguated = disambiguateCandidates(aniTitle, globalStrong, episodeCount);
+    if (disambiguated) return disambiguatedResult("globalStrong", disambiguated);
+    return { candidates: [], diagnostics: { strategy: "globalStrongRejected", candidates: globalStrong.map(toBgmSummary) } };
+  }
 
   const keyword = keywordCandidates(aniTitle, bgmSubjects, episodeCount, keywordStats);
   if (keyword.candidates.length) return keyword;
@@ -327,6 +471,7 @@ async function openaniPost(pathname) {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ password: null }),
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
   if (!response.ok) throw new Error(`ANi ${response.status} ${pathname}`);
   return response.json();
@@ -342,8 +487,39 @@ async function bgmGetSubjects(year, month, offset) {
   url.searchParams.set("offset", String(offset));
   const response = await fetch(url, {
     headers: { "user-agent": BGM_USER_AGENT },
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
   if (!response.ok) throw new Error(`Bangumi ${response.status} ${url}`);
+  return response.json();
+}
+
+async function bgmSearchSubjects(keyword) {
+  const url = new URL("/v0/search/subjects", BGM_API);
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "user-agent": BGM_USER_AGENT,
+    },
+    body: JSON.stringify({
+      keyword,
+      filter: { type: [2] },
+      limit: 10,
+      offset: 0,
+    }),
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
+  if (!response.ok) throw new Error(`Bangumi search ${response.status} ${keyword}`);
+  return response.json();
+}
+
+async function bgmGetSubject(id) {
+  const url = new URL(`/v0/subjects/${id}`, BGM_API);
+  const response = await fetch(url, {
+    headers: { "user-agent": BGM_USER_AGENT },
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
+  if (!response.ok) throw new Error(`Bangumi subject ${response.status} ${id}`);
   return response.json();
 }
 
@@ -419,6 +595,43 @@ function uniqueCandidates(candidates) {
     result.push(candidate);
   }
   return result;
+}
+
+function disambiguateCandidates(aniTitle, candidates, episodeCount) {
+  const scored = candidates
+    .map((subject) => ({
+      subject,
+      episodeFit: episodeFit(subject, episodeCount),
+      platform: String(subject?.platform || "").toLowerCase(),
+    }))
+    .sort((a, b) => b.episodeFit - a.episodeFit);
+
+  if (/\bWEB\s*版\b|\bWEB\b/iu.test(aniTitle)) {
+    const web = scored.filter((item) => item.platform === "web");
+    if (web.length === 1 && web[0].episodeFit >= 0.75) {
+      return { ...web[0], reason: "webPlatform" };
+    }
+  }
+
+  const best = scored[0];
+  const second = scored.find((item) => item.subject.id !== best?.subject.id);
+  if (best && best.episodeFit >= 0.75 && best.episodeFit - (second?.episodeFit || 0) >= 0.25) {
+    return { ...best, reason: "episodeFit", secondEpisodeFit: second?.episodeFit || 0 };
+  }
+
+  return null;
+}
+
+function disambiguatedResult(baseStrategy, item) {
+  return {
+    candidates: [item.subject],
+    diagnostics: {
+      strategy: `${baseStrategy}Disambiguated`,
+      reason: item.reason,
+      episodeFit: Number(item.episodeFit.toFixed(3)),
+      secondEpisodeFit: Number((item.secondEpisodeFit || 0).toFixed(3)),
+    },
+  };
 }
 
 function buildReviewReport(reports) {
@@ -563,6 +776,14 @@ function classifyUnmatched(item) {
     reason: "manualReviewRequired",
     detail: "No rule accepted this item without risking a false positive.",
     candidate: best.alias || "",
+  };
+}
+
+function classifyAmbiguous(item) {
+  return {
+    reason: "ambiguousCandidates",
+    detail: "Multiple BGM candidates matched and no structural signal safely selected one, so only the ANi title search key is indexed.",
+    candidates: item.candidates,
   };
 }
 
@@ -1081,18 +1302,27 @@ function shardSearchEntries(entries) {
   return shards;
 }
 
-function listSeasons(start, end) {
-  const [startYear, startMonth] = start.split("-").map(Number);
-  const [endYear, endMonth] = end.split("-").map(Number);
-  const result = [];
-  for (let year = startYear; year <= endYear; year++) {
-    for (const month of [1, 4, 7, 10]) {
-      if (year === startYear && month < startMonth) continue;
-      if (year === endYear && month > endMonth) continue;
-      result.push(`${year}-${month}`);
-    }
-  }
-  return result;
+function discoverSeasons(rootListing, start, end) {
+  return (rootListing.files || [])
+    .filter((file) => file?.mimeType === FOLDER_MIME && isSeasonName(file.name))
+    .map((file) => file.name)
+    .filter((season) => compareSeason(season, start) >= 0)
+    .filter((season) => !end || compareSeason(season, end) <= 0)
+    .sort(compareSeason);
+}
+
+function hasAniArchive(rootListing) {
+  return (rootListing.files || []).some((file) => file?.mimeType === FOLDER_MIME && file.name === ARCHIVE_SEASON);
+}
+
+function isSeasonName(value) {
+  return /^\d{4}-(?:1|4|7|10)$/u.test(value || "");
+}
+
+function compareSeason(a, b) {
+  const [ay, am] = String(a).split("-").map(Number);
+  const [by, bm] = String(b).split("-").map(Number);
+  return ay - by || am - bm;
 }
 
 function bgmMonthsForSeason(season) {
@@ -1111,6 +1341,7 @@ function normalizeKey(value) {
     .replace(/\p{Cf}/gu, "")
     .replace(/幺/g, "么")
     .replace(/坯/g, "坏")
+    .replace(/砲/g, "炮")
     .replace(/智慧型/g, "智能")
     .replace(/钢弹/g, "高达")
     .replace(/编/g, "篇")

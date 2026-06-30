@@ -15,16 +15,33 @@ asking the wrong index, and can miss the FastSelect window.
 
 ## Supported ANi Scope
 
-For the MVP, support ANi files from `2022-4` onward only.
+The builder discovers available season directories from the ANi Open root
+listing instead of assuming a complete quarterly sequence. Current local index
+scope starts at `2019-1`; `2019-4` is not present in the root listing and should
+not be synthesized.
 
-ANi announced the stable EMBY-friendly filename format from the 2022-04 season:
+The builder also treats `/ANi/` as a legacy archive bucket. Archive entries do
+not have season context, so they may use Bangumi search as an offline fallback
+and must still verify candidates locally before writing `name_cn` search keys.
+
+ANi has used three observed filename schemas in this index:
+
+```text
+[ANi]<番名>[<集數>][<解像度>][<來源>][<獲取方法>].<副檔名>
+```
+
+This schema appears in early season folders around 2019-2022.
+
+ANi announced the EMBY-friendly filename format from the 2022-04 season:
 
 ```text
 [TeamName] <番名(中文)> - <集數> [<解像度>][<來源>][<獲取方法>][<音頻格式> <影像格式>][<字幕語言>].<副檔名>
 ```
 
-The adapter should only rely on this format. Do not spend MVP effort on old ANi
-filename formats before `2022-4`.
+The same EMBY-friendly schema also appears in the `/ANi/` archive. Some older
+season entries add intermediate folders such as `日文配音` or `中文配音`; folder
+recursion should preserve the original subject folder title and should not treat
+language folder names as subject titles.
 
 ANi season directories are JSON file lists returned by POSTing
 `{"password": null}`.
@@ -48,8 +65,8 @@ to Animeko's first-search title, normally Bangumi `name_cn`.
 The preferred architecture is:
 
 1. A local builder script runs on the user's machine.
-2. The builder fetches ANi season directories from `2022-4` through the current
-   season.
+2. The builder fetches the ANi root directory, discovers real season folders
+   from `2019-1` onward, and optionally includes the `/ANi/` archive bucket.
 3. The builder supports both ANi folder entries and flat video files:
    - For folders, the folder name is the ANi title and the folder contents are
      the episode list.
@@ -85,9 +102,11 @@ search ranking can produce wrong first results for titles such as `K-ON!`,
 `戰姬絕唱`, and `命運石之門`. Prefer season browsing plus local alias reverse
 lookup.
 
-`POST /v0/search/subjects` is allowed only as a fallback for unmatched or
-diagnostic cases, and its result must be locally verified before writing a search
-key.
+`POST /v0/search/subjects` is allowed for `/ANi/` archive matching and for
+unmatched or diagnostic cases. Query both the original ANi title and its
+Simplified Chinese form when using search, because Bangumi search ranking is
+less reliable for Traditional Chinese archive titles. Search results must be
+locally verified before writing a search key.
 
 Do not make normal `/search` requests depend on live Bangumi calls.
 Do not make normal `/search` requests depend on ANi global search.
@@ -192,9 +211,19 @@ This writes `search` shards and `season` tables first, then switches
 planned writes. `keyword` shards are excluded by default; include them only when
 runtime fallback is implemented.
 
-Daily updates should only rebuild the latest season table and changed search
-shards. If needed, also refresh the adjacent previous and next season directories
-to cover cross-season uploads.
+Daily automation should use the same publish order:
+
+1. Fetch the ANi root listing and discover season folders.
+2. Rebuild the latest discovered season, the previous season, and the next season
+   if it already exists in the root listing.
+3. Rebuild `/ANi/` only on a slower cadence, such as weekly, or when the root
+   listing shows archive changes.
+4. Run `bun run verify:index`.
+5. Upload versioned season tables and search shards.
+6. Switch `openani:v1:manifest` last.
+
+The full rebuild remains the recovery path. Incremental automation should never
+mutate the active manifest until verification passes for the candidate index.
 
 ## Data Safety
 
