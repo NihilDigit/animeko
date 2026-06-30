@@ -144,6 +144,10 @@ The Worker fast path should be:
 5. Only if exact lookup misses, optionally run keyword fallback by loading token
    shards and scoring the unioned candidates. Do not scan all `season` tables.
 
+MVP runtime should implement exact `search` + `season` lookup first. Do not wire
+`keyword` shards into Worker request handling until the exact-index path is
+deployed and measured.
+
 For example, Animeko searching `莉可丽丝` normalizes to the search key
 `莉可丽丝`, which points to `2022-7/lycorisrecoil莉可丽丝`; the season table then
 provides the ANi title `Lycoris Recoil 莉可麗絲` and all episode URLs.
@@ -176,6 +180,17 @@ survival, but the intended fast path is static KV index lookup.
 ## Update Strategy
 
 Initial bootstrap can be run locally and uploaded to KV.
+
+Upload the MVP exact index with:
+
+```bash
+bun run upload:index
+```
+
+This writes `search` shards and `season` tables first, then switches
+`openani:v1:manifest` last. Use `bun run upload:index -- --dry-run` to print the
+planned writes. `keyword` shards are excluded by default; include them only when
+runtime fallback is implemented.
 
 Daily updates should only rebuild the latest season table and changed search
 shards. If needed, also refresh the adjacent previous and next season directories

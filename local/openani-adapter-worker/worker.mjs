@@ -3,8 +3,9 @@ import * as OpenCC from "opencc-js";
 const OPENANI_ORIGIN = "https://openani.an-i.workers.dev";
 const FOLDER_MIME = "application/vnd.google-apps.folder";
 const CACHE_TTL_SECONDS = 30 * 60;
-const CACHE_VERSION = "20260630-season-listing-slash";
+const CACHE_VERSION = "20260630-static-index-exact";
 const toTraditional = OpenCC.Converter({ from: "cn", to: "tw" });
+const toSimplified = OpenCC.Converter({ from: "tw", to: "cn" });
 
 export default {
   async fetch(request, env, ctx) {
@@ -21,9 +22,9 @@ export default {
         case "/sub.json":
           return json(subscription(url.origin));
         case "/search":
-          return cached(request, ctx, () => handleSearch(url));
+          return cached(request, ctx, () => handleSearch(url, env));
         case "/subject":
-          return cached(request, ctx, () => handleSubject(url));
+          return cached(request, ctx, () => handleSubject(url, env));
         case "/play":
           return handlePlay(url);
         default:
@@ -35,9 +36,12 @@ export default {
   },
 };
 
-async function handleSearch(url) {
+async function handleSearch(url, env) {
   const keyword = (url.searchParams.get("wd") || url.searchParams.get("keyword") || "").trim();
   if (!keyword) return html(renderSearch(url.origin, keyword, []));
+
+  const indexedItems = await indexedSearchItems(url.origin, keyword, env);
+  if (indexedItems.length) return html(renderSearch(url.origin, keyword, indexedItems));
 
   const directItems = await directSearchItems(url.origin, keyword);
   if (directItems.length) return html(renderSearch(url.origin, keyword, directItems));
@@ -72,7 +76,15 @@ async function directSearchItems(origin, keyword) {
     }));
 }
 
-async function handleSubject(url) {
+async function handleSubject(url, env) {
+  const season = (url.searchParams.get("season") || "").trim();
+  const titleKey = (url.searchParams.get("titleKey") || "").trim();
+  if (season && titleKey) {
+    const subject = await indexedSubject(season, titleKey, env);
+    if (!subject) return html(renderSubject(url.origin, titleKey, []));
+    return html(renderSubject(url.origin, subject.aniTitle || titleKey, subject.episodes || []));
+  }
+
   const search = (url.searchParams.get("search") || "").trim();
   const subjectPath = normalizeFolderPath(url.searchParams.get("path") || "");
   const filter = (url.searchParams.get("q") || "").trim();
@@ -344,7 +356,7 @@ function subscription(origin) {
               searchUrl: `${origin}/search?wd={keyword}`,
               searchUseOnlyFirstWord: false,
               searchRemoveSpecial: false,
-              searchUseSubjectNamesCount: 8,
+              searchUseSubjectNamesCount: 1,
               rawBaseUrl: origin,
               requestInterval: 1000,
               subjectFormatId: "a",
@@ -383,6 +395,71 @@ function subscription(origin) {
       ],
     },
   };
+}
+
+async function indexedSearchItems(origin, keyword, env) {
+  const manifest = await indexManifest(env);
+  if (!manifest) return [];
+
+  const searchKey = normalizeIndexKey(keyword);
+  if (!searchKey) return [];
+
+  const searchShard = await indexJson(env, manifest.kv.searchKeyPattern.replace("<hashPrefix>", await hashPrefix(searchKey, manifest)));
+  const entries = searchShard?.[searchKey] || [];
+  if (!entries.length) return [];
+
+  const seasons = new Map();
+  const items = [];
+  for (const entry of entries) {
+    const seasonTable = seasons.get(entry.season) ||
+      await indexJson(env, manifest.kv.seasonKeyPattern.replace("<season>", entry.season));
+    seasons.set(entry.season, seasonTable);
+
+    const subject = seasonTable?.subjects?.[entry.titleKey];
+    if (!subject?.episodes?.length) continue;
+    items.push({
+      name: subject.bgm?.nameCn || subject.aniTitle || entry.aniTitle || entry.titleKey,
+      href: `${origin}/subject?season=${encodeURIComponent(entry.season)}&titleKey=${encodeURIComponent(entry.titleKey)}`,
+      kind: "index",
+    });
+  }
+
+  return dedupeBy(items, (item) => item.href);
+}
+
+async function indexedSubject(season, titleKey, env) {
+  const manifest = await indexManifest(env);
+  if (!manifest) return null;
+  const seasonTable = await indexJson(env, manifest.kv.seasonKeyPattern.replace("<season>", season));
+  return seasonTable?.subjects?.[titleKey] || null;
+}
+
+async function indexManifest(env) {
+  return indexJson(env, "openani:v1:manifest");
+}
+
+async function indexJson(env, key) {
+  const namespace = env?.OPENANI_INDEX;
+  if (!namespace || !key) return null;
+  try {
+    return await namespace.get(key, { type: "json" });
+  } catch {}
+  try {
+    return await namespace.get(key, "json");
+  } catch {
+    return null;
+  }
+}
+
+async function hashPrefix(value, manifest) {
+  const prefixLength = manifest?.kv?.searchShardPrefixLength || 1;
+  return (await sha1Hex(value)).slice(0, prefixLength);
+}
+
+async function sha1Hex(value) {
+  const bytes = new TextEncoder().encode(value);
+  const digest = await crypto.subtle.digest("SHA-1", bytes);
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 async function cached(request, ctx, producer) {
@@ -502,6 +579,26 @@ function normalizeSearchText(value) {
   return toTraditionalLite(cleanupSubject(value))
     .toLowerCase()
     .replace(/[\s_\-:：·・!！?？,，.。()[\]【】「」『』《》〈〉]/g, "");
+}
+
+function normalizeIndexKey(value) {
+  return toSimplified(String(value || "").normalize("NFKC"))
+    .toLowerCase()
+    .replace(/\p{Cf}/gu, "")
+    .replace(/幺/g, "么")
+    .replace(/坯/g, "坏")
+    .replace(/智慧型/g, "智能")
+    .replace(/钢弹/g, "高达")
+    .replace(/编/g, "篇")
+    .replace(/裤裤/g, "胖次")
+    .replace(/嫌恶/g, "嫌弃")
+    .replace(/疗愈/g, "治愈")
+    .replace(/&/g, "and")
+    .replace(/[×＊]/g, "x")
+    .replace(/[＋+]/g, "plus")
+    .replace(/[$＄￥¥]/g, "")
+    .replace(/[／/]/g, "")
+    .replace(/[\s_\-:：;；·・!！?？,，.。()[\]【】「」『』《》〈〉~～†☆★♪♡△—―‐‑‧"'`´’‘’ʼ“”]/g, "");
 }
 
 function expandKeyword(keyword) {

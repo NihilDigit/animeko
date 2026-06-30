@@ -3,6 +3,7 @@
   "type": "module",
   "scripts": {
     "build:index": "bun scripts/build-index.mjs",
+    "upload:index": "bun scripts/upload-index.mjs",
     "verify:index": "bun scripts/verify-index.mjs"
   },
   "dependencies": {
