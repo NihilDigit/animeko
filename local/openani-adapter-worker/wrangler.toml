@@ -1,0 +1,7 @@
+name = "ani-open-adapter"
+main = "worker.mjs"
+compatibility_date = "2026-06-30"
+
+[[kv_namespaces]]
+binding = "OPENANI_INDEX"
+id = "92bff747da1d44fd86cae788fcbc606d"
