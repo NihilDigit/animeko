@@ -3,7 +3,7 @@ import * as OpenCC from "opencc-js";
 const OPENANI_ORIGIN = "https://openani.an-i.workers.dev";
 const FOLDER_MIME = "application/vnd.google-apps.folder";
 const CACHE_TTL_SECONDS = 30 * 60;
-const CACHE_VERSION = "20260630-static-index-exact";
+const CACHE_VERSION = "20260630-legacy-index-exact";
 const toTraditional = OpenCC.Converter({ from: "cn", to: "tw" });
 const toSimplified = OpenCC.Converter({ from: "tw", to: "cn" });
 
@@ -350,7 +350,7 @@ function subscription(origin) {
           version: 2,
           arguments: {
             name: "ANi Open",
-            description: "收录2022-04之后的新番，繁中翻译",
+            description: "收录2019-01之后的新番及部分旧番归档，繁中翻译",
             iconUrl: `${origin}/favicon.ico`,
             searchConfig: {
               searchUrl: `${origin}/search?wd={keyword}`,
