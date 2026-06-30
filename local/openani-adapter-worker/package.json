@@ -1,6 +1,10 @@
 {
   "private": true,
   "type": "module",
+  "scripts": {
+    "build:index": "bun scripts/build-index.mjs",
+    "verify:index": "bun scripts/verify-index.mjs"
+  },
   "dependencies": {
     "opencc-js": "^1.0.5"
   }
