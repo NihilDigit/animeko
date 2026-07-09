@@ -15,6 +15,18 @@ import kotlin.test.assertEquals
 
 class PlayerControllerStateTest {
     @Test
+    fun `editing focus returns to player`() {
+        val state = PlayerFocusState()
+        assertEquals(PlayerFocusMode.PLAYER, state.mode)
+
+        state.enterEditing()
+        assertEquals(PlayerFocusMode.EDITING, state.mode)
+
+        state.enterPlayer()
+        assertEquals(PlayerFocusMode.PLAYER, state.mode)
+    }
+
+    @Test
     fun `test toggle visibility`() = runTest {
         val state = PlayerControllerState(ControllerVisibility.Visible)
         state.toggleFullVisible()

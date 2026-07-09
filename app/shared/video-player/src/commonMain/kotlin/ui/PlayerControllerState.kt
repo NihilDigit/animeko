@@ -12,6 +12,7 @@ package me.him188.ani.app.videoplayer.ui
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -20,6 +21,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import me.him188.ani.app.ui.foundation.interaction.hoverable
 import me.him188.ani.utils.platform.annotations.TestOnly
 
@@ -33,6 +37,59 @@ fun rememberVideoControllerState(
 ): PlayerControllerState {
     return remember {
         PlayerControllerState(initialVisibility)
+    }
+}
+
+enum class PlayerFocusMode {
+    PLAYER,
+    EDITING,
+}
+
+@Stable
+class PlayerFocusState {
+    var mode: PlayerFocusMode by mutableStateOf(PlayerFocusMode.PLAYER)
+        private set
+
+    internal val requester = FocusRequester()
+
+    fun enterEditing() {
+        mode = PlayerFocusMode.EDITING
+    }
+
+    fun enterPlayer() {
+        mode = PlayerFocusMode.PLAYER
+    }
+
+    internal fun focusPlayer() {
+        mode = PlayerFocusMode.PLAYER
+        requester.requestFocus()
+    }
+
+    internal fun reapply() {
+        if (mode == PlayerFocusMode.PLAYER) {
+            requester.requestFocus()
+        }
+    }
+}
+
+@Composable
+internal fun Modifier.playerFocusHost(
+    state: PlayerFocusState,
+    reapplyKey: Any?,
+): Modifier {
+    val mode = state.mode
+
+    LaunchedEffect(state, mode, reapplyKey) {
+        state.reapply()
+    }
+    return focusRequester(state.requester)
+}
+
+fun Modifier.playerTextInputFocus(state: PlayerFocusState): Modifier = onFocusChanged {
+    if (it.isFocused) {
+        state.enterEditing()
+    } else {
+        state.enterPlayer()
     }
 }
 
@@ -85,6 +142,8 @@ class PlayerControllerState(
     companion object {
         val DEFAULT_INITIAL_VISIBILITY = ControllerVisibility.Invisible
     }
+
+    val focusState = PlayerFocusState()
 
     private var fullVisible by mutableStateOf(initialVisibility == ControllerVisibility.Visible)
     private val hasProgressBarRequester by derivedStateOf { progressBarRequesters.isNotEmpty() }
