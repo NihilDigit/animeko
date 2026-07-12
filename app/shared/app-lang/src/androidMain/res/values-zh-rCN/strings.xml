@@ -475,6 +475,7 @@
     <string name="settings_update_popup_auto_update">自动更新</string>
     <string name="settings_update_popup_close">关闭</string>
     <string name="settings_update_popup_downloading">正在下载更新</string>
+    <string name="settings_update_popup_installing">正在安装更新</string>
     <string name="settings_update_popup_cancel_download">要取消下载吗?</string>
     <string name="settings_update_popup_cancel">取消</string>
     <string name="settings_update_popup_continue_download">继续下载</string>

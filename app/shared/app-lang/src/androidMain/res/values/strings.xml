@@ -427,6 +427,7 @@
     <string name="settings_update_popup_auto_update">Auto-update</string>
     <string name="settings_update_popup_close">Close</string>
     <string name="settings_update_popup_downloading">Downloading Update</string>
+    <string name="settings_update_popup_installing">Installing Update</string>
     <string name="settings_update_popup_cancel_download">Cancel Download?</string>
     <string name="settings_update_popup_cancel">Cancel</string>
     <string name="settings_update_popup_continue_download">Continue Download</string>

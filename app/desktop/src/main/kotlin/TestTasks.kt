@@ -78,11 +78,13 @@ object TestTasks {
     // https://d.myani.org/v4.0.0-release-checksum-1/ani-4.0.0-release-checksum-1-windows-x86_64.zip
     private fun downloadUpdateAndInstall(args: List<String>, context: DesktopContext): Nothing {
         val url = args[0]
+        val updateInstaller = KoinPlatform.getKoin().get<UpdateInstaller>()
+        val installerDownloadUrls = updateInstaller.getInstallerDownloadUrls(listOf(url))
 
         val result = runBlocking {
-            logger.info { "Downloading update from $url" }
+            logger.info { "Downloading update metadata from ${installerDownloadUrls.first()}" }
             DefaultFileDownloader(clientProvider.get(ScopedHttpClientUserAgent.ANI)).download(
-                listOf(url),
+                installerDownloadUrls,
                 saveDir = File(".").toKtPath().inSystem,
             ).also {
                 logger.info { "Downloading done" }
@@ -91,8 +93,10 @@ object TestTasks {
 
         when (currentPlatformDesktop()) {
             is Platform.Linux -> {
-                // not supported
-                exitProcess(0)
+                logger.info { "Performing AppImage update" }
+                exitWithInstallationResult(
+                    updateInstaller.install(result, listOf(url), context),
+                )
             }
 
             is Platform.MacOS -> {
@@ -103,19 +107,17 @@ object TestTasks {
 
             is Platform.Windows -> {
                 logger.info { "Performing install" }
-                val updateInstaller = KoinPlatform.getKoin().get<UpdateInstaller>()
-                val installationResult = updateInstaller.install(result, context)
-                when (installationResult) {
-                    InstallationResult.Succeed -> {
-                        // OK
-                        exitProcess(0)
-                    }
+                exitWithInstallationResult(updateInstaller.install(result, context))
+            }
+        }
+    }
 
-                    is InstallationResult.Failed -> {
-                        logger.error { "Failed to install update: $installationResult" }
-                        exitProcess(1)
-                    }
-                }
+    private fun exitWithInstallationResult(result: InstallationResult): Nothing {
+        when (result) {
+            InstallationResult.Succeed -> exitProcess(0)
+            is InstallationResult.Failed -> {
+                logger.error { "Failed to install update: $result" }
+                exitProcess(1)
             }
         }
     }
