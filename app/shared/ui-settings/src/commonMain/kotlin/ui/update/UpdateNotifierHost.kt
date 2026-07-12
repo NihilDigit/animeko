@@ -76,7 +76,7 @@ fun BoxScope.UpdateNotifier(
             }
         },
         onInstallClick = {
-            viewModel.install(context)?.let {
+            viewModel.install(context) {
                 showInstallationError = it
             }
         },
@@ -140,6 +140,7 @@ fun BoxScope.UpdateNotifier(
                     version = presentation.newVersion,
                     fileDownloaderStats = presentation.fileDownloaderStats,
                     error = presentation.downloadError,
+                    isInstalling = presentation.state is AppUpdateState.Installing,
                     onInstallClick = onInstallClick,
                     onCancelClick = {
                         onCancelClick()

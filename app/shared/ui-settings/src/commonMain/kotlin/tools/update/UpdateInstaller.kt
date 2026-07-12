@@ -20,12 +20,34 @@ import me.him188.ani.utils.io.SystemPath
  * - macOS：打开 dmg 让系统去安装，需要用户手动拖拽一下
  */
 interface UpdateInstaller {
+    /** 是否应在后台线程等待安装器完成. */
+    val installInBackground: Boolean get() = false
+
+    /**
+     * 将版本 API 返回的安装包地址转换为安装前需要下载的地址.
+     *
+     * 默认直接下载安装包. Linux AppImage 只需预取很小的 zsync 元数据,
+     * 实际差分下载由外部更新器在应用退出后完成.
+     */
+    fun getInstallerDownloadUrls(packageUrls: List<String>): List<String> = packageUrls
+
     /**
      * 如果 [install] 可能返回 [InstallationResult.Failed], 则需实现
      */
     suspend fun openForManualInstallation(file: SystemPath, context: ContextMP): Boolean = false
 
     fun install(file: SystemPath, context: ContextMP): InstallationResult
+
+    /**
+     * 使用版本 API 返回的原始安装包地址执行安装.
+     *
+     * 默认平台仍安装已经下载到 [file] 的完整安装包.
+     */
+    fun install(
+        file: SystemPath,
+        packageUrls: List<String>,
+        context: ContextMP,
+    ): InstallationResult = install(file, context)
 }
 
 sealed class InstallationResult {

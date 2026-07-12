@@ -72,19 +72,22 @@ class AppUpdateViewModel : AbstractViewModel(), KoinComponent {
      */
     private val fileDownloaderPresenter = FileDownloaderPresenter(fileDownloader, backgroundScope)
     private val autoCheckTasker = MonoTasker(backgroundScope)
+    private val installationTasker = MonoTasker(backgroundScope)
     private val checkUpdateErrorFlow = MutableStateFlow<LoadError?>(null)
 
     val presentationFlow = combine(
         latestVersionFlow,
         fileDownloaderPresenter.flow,
         autoCheckTasker.isRunning,
+        installationTasker.isRunning,
         checkUpdateErrorFlow,
-    ) { latestVersion, fileDownloaderStats, isCheckingUpdate, checkUpdateError ->
+    ) { latestVersion, fileDownloaderStats, isCheckingUpdate, isInstalling, checkUpdateError ->
         val latestVersion = latestVersion
         val state = when {
             // 还没检查过
             lastCheckTime.value == 0L -> AppUpdateState.ClickToCheck
             latestVersion == null -> AppUpdateState.AlreadyUpToDate
+            isInstalling -> AppUpdateState.Installing(latestVersion)
             else -> {
                 when (fileDownloaderStats.state) {
                     FileDownloaderState.Idle -> AppUpdateState.HasUpdate(latestVersion)
@@ -188,10 +191,11 @@ class AppUpdateViewModel : AbstractViewModel(), KoinComponent {
                 return@launch
             }
 
+            val installerDownloadUrls = updateInstaller.getInstallerDownloadUrls(ver.downloadUrlAlternatives)
             val dir = updateManager.saveDir
             if (dir.exists()) {
                 // 删除旧的文件
-                val allowedFilenames = ver.downloadUrlAlternatives.map {
+                val allowedFilenames = installerDownloadUrls.map {
                     it.substringAfterLast("/", "")
                 }.let { list ->
                     list + list.map { "$it.sha1" }
@@ -208,7 +212,7 @@ class AppUpdateViewModel : AbstractViewModel(), KoinComponent {
 
             withContext(Dispatchers.IO) { dir.createDirectories() }
             fileDownloader.download(
-                alternativeUrls = ver.downloadUrlAlternatives,
+                alternativeUrls = installerDownloadUrls,
                 filenameProvider = { it.substringAfterLast("/", "") },
                 saveDir = dir,
             )
@@ -219,13 +223,28 @@ class AppUpdateViewModel : AbstractViewModel(), KoinComponent {
         latestVersionFlow.value?.let { startDownload(it, uriHandler) }
     }
 
-    fun install(context: ContextMP): InstallationResult.Failed? {
+    fun install(
+        context: ContextMP,
+        onFailure: (InstallationResult.Failed) -> Unit,
+    ) {
         val state = presentationFlow.value.state as? AppUpdateState.Downloaded
-            ?: return null
-        val result = updateInstaller.install(state.file, context)
-        return when (result) {
-            is InstallationResult.Failed -> result
-            InstallationResult.Succeed -> null
+            ?: return
+        installationTasker.launch {
+            val install = {
+                updateInstaller.install(
+                    file = state.file,
+                    packageUrls = state.version.downloadUrlAlternatives,
+                    context = context,
+                )
+            }
+            val result = if (updateInstaller.installInBackground) {
+                withContext(Dispatchers.IO) { install() }
+            } else {
+                install()
+            }
+            if (result is InstallationResult.Failed) {
+                onFailure(result)
+            }
         }
     }
 
@@ -251,6 +270,7 @@ data class AppUpdatePresentation(
         is AppUpdateState.Downloaded -> true
         is AppUpdateState.Downloading -> true
         is AppUpdateState.HasUpdate -> false
+        is AppUpdateState.Installing -> true
     }
     val downloadError = (state as? AppUpdateState.DownloadFailed)?.throwable?.let { LoadError.fromException(it) }
 

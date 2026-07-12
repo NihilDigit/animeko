@@ -21,6 +21,7 @@ import me.him188.ani.utils.logging.info
 import me.him188.ani.utils.logging.logger
 import me.him188.ani.utils.platform.Platform
 import java.io.File
+import kotlin.concurrent.thread
 import kotlin.io.path.createTempDirectory
 import kotlin.system.exitProcess
 
@@ -276,7 +277,22 @@ object MacOSUpdateInstaller : DesktopUpdateInstaller {
     }
 }
 
+private fun exitProcessForUpdate(delayMillis: Long): InstallationResult {
+    thread(name = "ani-update-exit") {
+        if (delayMillis > 0) Thread.sleep(delayMillis)
+        exitProcess(0)
+    }
+    return InstallationResult.Succeed
+}
+
 object LinuxUpdateInstaller : DesktopUpdateInstaller {
+    private val logger = logger<LinuxUpdateInstaller>()
+
+    override val installInBackground: Boolean get() = true
+
+    override fun getInstallerDownloadUrls(packageUrls: List<String>): List<String> =
+        packageUrls.toAppImageZsyncUrls()
+
     override fun deleteOldUpdater() {
         // no-op
     }
@@ -287,7 +303,110 @@ object LinuxUpdateInstaller : DesktopUpdateInstaller {
         }
         return InstallationResult.Succeed
     }
+
+    override fun install(
+        file: SystemPath,
+        packageUrls: List<String>,
+        context: ContextMP,
+    ): InstallationResult {
+        val appImage = System.getenv("APPIMAGE")
+            ?.takeIf(String::isNotBlank)
+            ?.let(::File)
+            ?: return failed("APPIMAGE is not set; the app was not started from an AppImage")
+
+        if (!appImage.isFile) {
+            return failed("APPIMAGE does not point to a file: ${appImage.absolutePath}")
+        }
+        if (!appImage.canWrite() || appImage.parentFile?.canWrite() != true) {
+            return failed("The current AppImage is not writable: ${appImage.absolutePath}")
+        }
+
+        val updateInformation = packageUrls.toAppImageZsyncUrls().map { "zsync|$it" }
+        if (updateInformation.isEmpty()) {
+            return failed("No AppImage update URLs were provided")
+        }
+
+        val resourcesDir = System.getProperty("compose.application.resources.dir")
+            ?.takeIf(String::isNotBlank)
+            ?.let(::File)
+            ?: return failed("Cannot find Compose application resources directory")
+        val bundledUpdater = resourcesDir.resolve(LINUX_APPIMAGE_UPDATE_TOOL)
+        if (!bundledUpdater.isFile) {
+            return failed("Bundled AppImage update tool was not found: ${bundledUpdater.absolutePath}")
+        }
+
+        return runCatching {
+            val tempDir = createTempDirectory(prefix = "animeko-appimage-update-").toFile()
+            val updater = tempDir.resolve(LINUX_APPIMAGE_UPDATE_TOOL)
+            bundledUpdater.copyTo(updater)
+            check(updater.setExecutable(true)) { "Failed to make updater executable: ${updater.absolutePath}" }
+
+            val script = tempDir.resolve("update.sh")
+            script.writeText(LINUX_APPIMAGE_UPDATE_SCRIPT)
+            check(script.setExecutable(true)) { "Failed to make update script executable: ${script.absolutePath}" }
+
+            val command = buildList {
+                add(script.absolutePath)
+                add(appImage.absolutePath)
+                add(updater.absolutePath)
+                addAll(updateInformation)
+            }
+            logger.info { "Launching AppImage updater for ${appImage.absolutePath}" }
+            val logFile = tempDir.resolve("update.log")
+            val process = ProcessBuilder(command)
+                .redirectErrorStream(true)
+                .redirectOutput(logFile)
+                .start()
+            val exitCode = process.waitFor()
+            if (exitCode == 0) {
+                logger.info { "AppImage update completed successfully" }
+                exitProcessForUpdate(delayMillis = 0)
+            } else {
+                failed("AppImage updater exited with code $exitCode. Log: ${logFile.absolutePath}")
+            }
+        }.getOrElse { throwable ->
+            logger.error(throwable) { "Failed to launch AppImage updater" }
+            InstallationResult.Failed(
+                InstallationFailureReason.FAILED_TO_COPY,
+                throwable.message,
+            )
+        }
+    }
+
+    private fun failed(message: String): InstallationResult.Failed {
+        logger.error { message }
+        return InstallationResult.Failed(
+            InstallationFailureReason.UNSUPPORTED_FILE_STRUCTURE,
+            message,
+        )
+    }
 }
+
+internal const val LINUX_APPIMAGE_UPDATE_TOOL = "appimageupdatetool-x86_64.AppImage"
+
+internal fun List<String>.toAppImageZsyncUrls(): List<String> = map { url ->
+    if (url.endsWith(".zsync", ignoreCase = true)) url else "$url.zsync"
+}
+
+internal val LINUX_APPIMAGE_UPDATE_SCRIPT = $$"""
+    #!/usr/bin/env bash
+    set -uo pipefail
+
+    APPIMAGE_PATH="$1"
+    UPDATER_PATH="$2"
+    shift 2
+
+    for UPDATE_INFORMATION in "$@"; do
+      if "$UPDATER_PATH" --overwrite --update-info "$UPDATE_INFORMATION" "$APPIMAGE_PATH"; then
+        chmod a+x "$APPIMAGE_PATH"
+        rm -f "$UPDATER_PATH"
+        exit 0
+      fi
+    done
+
+    echo "All AppImage update sources failed." >&2
+    exit 1
+""".trimIndent()
 
 object WindowsUpdateInstaller : DesktopUpdateInstaller {
     private val logger = logger<WindowsUpdateInstaller>()

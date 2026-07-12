@@ -39,6 +39,12 @@ class UpdateChecker {
         HttpClient(getPlatformKtorEngine()) {
             expectSuccess = true
         }.use { client ->
+            currentAniBuildConfig.overrideAniApiServer.takeIf(String::isNotBlank)?.let { overrideServer ->
+                return client.getVersionFromAniServer(overrideServer, currentVersion, releaseClass).also {
+                    logger.info { "Got latest version from override server: ${it?.name}" }
+                }
+            }
+
             withExceptionCollector {
                 return kotlin.runCatching {
                     client.getVersionFromAniServer("https://danmaku-global.myani.org/", currentVersion, releaseClass)

@@ -46,6 +46,7 @@ import me.him188.ani.app.ui.lang.settings_update_popup_cancel_download
 import me.him188.ani.app.ui.lang.settings_update_popup_continue_download
 import me.him188.ani.app.ui.lang.settings_update_popup_download_complete
 import me.him188.ani.app.ui.lang.settings_update_popup_downloading
+import me.him188.ani.app.ui.lang.settings_update_popup_installing
 import me.him188.ani.app.ui.lang.settings_update_popup_restart_update
 import me.him188.ani.app.ui.search.LoadErrorCard
 import me.him188.ani.utils.platform.annotations.TestOnly
@@ -57,6 +58,7 @@ fun DownloadingUpdatePopupCard(
     version: NewVersion,
     fileDownloaderStats: FileDownloaderStats,
     error: LoadError?,
+    isInstalling: Boolean,
     onInstallClick: () -> Unit,
     onCancelClick: () -> Unit,
     onRetryClick: () -> Unit,
@@ -64,7 +66,7 @@ fun DownloadingUpdatePopupCard(
 ) {
     var showConfirmCancel by rememberSaveable { mutableStateOf(false) }
     val onRequestCancel = {
-        when (fileDownloaderStats.state) {
+        if (!isInstalling) when (fileDownloaderStats.state) {
             // 弹一个对话框问一下
             FileDownloaderState.Downloading -> showConfirmCancel = true
 
@@ -102,14 +104,21 @@ fun DownloadingUpdatePopupCard(
     }
 
     BasicNotificationPopupCard(
-        title = { Text(stringResource(Lang.settings_update_popup_downloading)) },
+        title = {
+            Text(
+                stringResource(
+                    if (isInstalling) Lang.settings_update_popup_installing
+                    else Lang.settings_update_popup_downloading,
+                ),
+            )
+        },
         modifier,
         dismissButton = {
-            NotificationPopupDefaults.DismissButton(onRequestCancel)
+            if (!isInstalling) NotificationPopupDefaults.DismissButton(onRequestCancel)
         },
         subtitle = { Text(version.name) },
         actions = {
-            if (fileDownloaderStats.state is FileDownloaderState.Succeed) {
+            if (!isInstalling && fileDownloaderStats.state is FileDownloaderState.Succeed) {
                 Button(
                     onClick = onInstallClick,
                 ) {
@@ -119,6 +128,23 @@ fun DownloadingUpdatePopupCard(
         },
     ) {
         when {
+            isInstalling -> {
+                ListItem(
+                    headlineContent = {
+                        LinearProgressIndicator(
+                            modifier = Modifier.weight(1f).heightIn(min = 8.dp)
+                                .wrapContentHeight(Alignment.CenterVertically),
+                        )
+                    },
+                    trailingContent = {
+                        Box(Modifier.padding(start = 16.dp), contentAlignment = Alignment.CenterEnd) {
+                            Text("${999}%", Modifier.alpha(0f))
+                        }
+                    },
+                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                )
+            }
+
             fileDownloaderStats.state is FileDownloaderState.Succeed -> {
                 ListItem(
                     headlineContent = {
@@ -197,7 +223,10 @@ private fun PreviewDownloadingUpdatePopupCard() = ProvideCompositionLocalsForPre
         version = TestNewVersion,
         fileDownloaderStats = TestFileDownloaderStats.Downloading,
         error = null,
-        {}, {}, {},
+        isInstalling = false,
+        onInstallClick = {},
+        onCancelClick = {},
+        onRetryClick = {},
     )
 }
 
@@ -208,8 +237,11 @@ private fun PreviewDownloadingUpdatePopupCardError() = ProvideCompositionLocalsF
     DownloadingUpdatePopupCard(
         version = TestNewVersion,
         fileDownloaderStats = TestFileDownloaderStats.Failed,
+        isInstalling = false,
         error = LoadError.NetworkError,
-        {}, {}, {},
+        onInstallClick = {},
+        onCancelClick = {},
+        onRetryClick = {},
     )
 }
 
@@ -222,6 +254,9 @@ private fun PreviewDownloadingUpdatePopupCardSuccess() = ProvideCompositionLocal
         version = TestNewVersion,
         fileDownloaderStats = TestFileDownloaderStats.Succeed,
         error = null,
-        {}, {}, {},
+        isInstalling = false,
+        onInstallClick = {},
+        onCancelClick = {},
+        onRetryClick = {},
     )
 }
