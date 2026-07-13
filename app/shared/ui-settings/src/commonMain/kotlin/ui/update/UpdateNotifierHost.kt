@@ -144,7 +144,9 @@ fun BoxScope.UpdateNotifier(
                     onInstallClick = onInstallClick,
                     onCancelClick = {
                         onCancelClick()
-                        dismissedManually = true
+                        if (presentation.state !is AppUpdateState.Installing) {
+                            dismissedManually = true
+                        }
                     },
                     onRetryClick = onRetryClick,
                     modifier = positionModifiers,
