@@ -67,7 +67,11 @@ fun DownloadingUpdatePopupCard(
 ) {
     var showConfirmCancel by rememberSaveable { mutableStateOf(false) }
     val onRequestCancel = {
-        if (!isInstalling) when (fileDownloaderStats.state) {
+        if (isInstalling) {
+            // Linux builds the update beside the current AppImage and only replaces it after success,
+            // so cancelling the installer task leaves the current executable untouched.
+            onCancelClick()
+        } else when (fileDownloaderStats.state) {
             // 弹一个对话框问一下
             FileDownloaderState.Downloading -> showConfirmCancel = true
 
@@ -115,7 +119,7 @@ fun DownloadingUpdatePopupCard(
         },
         modifier,
         dismissButton = {
-            if (!isInstalling) NotificationPopupDefaults.DismissButton(onRequestCancel)
+            NotificationPopupDefaults.DismissButton(onRequestCancel)
         },
         subtitle = { Text(version.name) },
         actions = {

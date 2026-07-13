@@ -230,7 +230,7 @@ class AppUpdateViewModel : AbstractViewModel(), KoinComponent {
         val state = presentationFlow.value.state as? AppUpdateState.Downloaded
             ?: return
         installationTasker.launch {
-            val install = {
+            val install: suspend () -> InstallationResult = {
                 updateInstaller.install(
                     file = state.file,
                     packageUrls = state.version.downloadUrlAlternatives,
@@ -249,7 +249,11 @@ class AppUpdateViewModel : AbstractViewModel(), KoinComponent {
     }
 
     fun cancelDownload() {
-        downloadTasker.cancel()
+        if (installationTasker.isRunning.value) {
+            installationTasker.cancel()
+        } else {
+            downloadTasker.cancel()
+        }
     }
 }
 

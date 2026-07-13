@@ -27,7 +27,7 @@ interface UpdateInstaller {
      * 将版本 API 返回的安装包地址转换为安装前需要下载的地址.
      *
      * 默认直接下载安装包. Linux AppImage 只需预取很小的 zsync 元数据,
-     * 实际差分下载由外部更新器在应用退出后完成.
+     * 实际差分下载由外部更新器在安装阶段完成.
      */
     fun getInstallerDownloadUrls(packageUrls: List<String>): List<String> = packageUrls
 
@@ -43,7 +43,7 @@ interface UpdateInstaller {
      *
      * 默认平台仍安装已经下载到 [file] 的完整安装包.
      */
-    fun install(
+    suspend fun install(
         file: SystemPath,
         packageUrls: List<String>,
         context: ContextMP,

@@ -51,7 +51,12 @@ class LinuxUpdateInstallerTest {
                 """
                     #!/usr/bin/env bash
                     echo "${'$'}3" >> "${updateLog.absolutePath}"
-                    [[ "${'$'}3" == "zsync|https://fallback.example/update.zsync" ]]
+                    if [[ "${'$'}3" == "zsync|https://fallback.example/update.zsync" ]]; then
+                      mv "${'$'}4" "${'$'}4.zs-old"
+                      printf 'updated' > "${'$'}4"
+                      exit 0
+                    fi
+                    exit 1
                 """.trimIndent(),
             )
             assertTrue(setExecutable(true))
@@ -79,5 +84,88 @@ class LinuxUpdateInstallerTest {
             updateLog.readLines(),
         )
         assertFalse(launchMarker.exists())
+        assertEquals("updated", appImage.readText())
+        assertTrue(tempDir.listFiles().orEmpty().none { it.name.startsWith(".Animeko.AppImage.update.") })
+    }
+
+    @Test
+    fun `failed update leaves original AppImage untouched`() {
+        val tempDir = createTempDirectory("linux-update-installer-test").toFile()
+        val appImage = tempDir.resolve("Animeko.AppImage").apply {
+            writeText("original")
+            assertTrue(setExecutable(true))
+        }
+        val updater = tempDir.resolve(LINUX_APPIMAGE_UPDATE_TOOL).apply {
+            writeText(
+                """
+                    #!/usr/bin/env bash
+                    mv "${'$'}4" "${'$'}4.zs-old"
+                    printf 'incomplete' > "${'$'}4"
+                    exit 1
+                """.trimIndent(),
+            )
+            assertTrue(setExecutable(true))
+        }
+        val script = tempDir.resolve("update.sh").apply {
+            writeText(LINUX_APPIMAGE_UPDATE_SCRIPT)
+            assertTrue(setExecutable(true))
+        }
+
+        val process = ProcessBuilder(
+            script.absolutePath,
+            appImage.absolutePath,
+            updater.absolutePath,
+            "zsync|https://example.com/update.zsync",
+        ).start()
+
+        assertTrue(process.waitFor(10, TimeUnit.SECONDS))
+        assertEquals(1, process.exitValue())
+        assertEquals("original", appImage.readText())
+        assertTrue(tempDir.listFiles().orEmpty().none { it.name.startsWith(".Animeko.AppImage.update.") })
+    }
+
+    @Test
+    fun `cancelled update leaves original AppImage untouched`() {
+        val tempDir = createTempDirectory("linux-update-installer-test").toFile()
+        val appImage = tempDir.resolve("Animeko.AppImage").apply {
+            writeText("original")
+            assertTrue(setExecutable(true))
+        }
+        val updateStarted = tempDir.resolve("update-started")
+        val updater = tempDir.resolve(LINUX_APPIMAGE_UPDATE_TOOL).apply {
+            writeText(
+                """
+                    #!/usr/bin/env bash
+                    mv "${'$'}4" "${'$'}4.zs-old"
+                    touch "${updateStarted.absolutePath}"
+                    sleep 30
+                    printf 'updated' > "${'$'}4"
+                """.trimIndent(),
+            )
+            assertTrue(setExecutable(true))
+        }
+        val script = tempDir.resolve("update.sh").apply {
+            writeText(LINUX_APPIMAGE_UPDATE_SCRIPT)
+            assertTrue(setExecutable(true))
+        }
+
+        val process = ProcessBuilder(
+            script.absolutePath,
+            appImage.absolutePath,
+            updater.absolutePath,
+            "zsync|https://example.com/update.zsync",
+        ).start()
+        val startDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+        while (!updateStarted.exists() && System.nanoTime() < startDeadline) {
+            Thread.sleep(10)
+        }
+        assertTrue(updateStarted.exists())
+
+        process.descendants().use { descendants -> descendants.forEach { it.destroy() } }
+        process.destroy()
+
+        assertTrue(process.waitFor(10, TimeUnit.SECONDS))
+        assertEquals("original", appImage.readText())
+        assertTrue(tempDir.listFiles().orEmpty().none { it.name.startsWith(".Animeko.AppImage.update.") })
     }
 }

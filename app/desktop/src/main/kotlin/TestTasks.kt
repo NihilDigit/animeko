@@ -95,7 +95,7 @@ object TestTasks {
             is Platform.Linux -> {
                 logger.info { "Performing AppImage update" }
                 exitWithInstallationResult(
-                    updateInstaller.install(result, listOf(url), context),
+                    runBlocking { updateInstaller.install(result, listOf(url), context) },
                 )
             }
 

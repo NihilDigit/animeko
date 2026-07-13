@@ -9,6 +9,7 @@
 
 package me.him188.ani.app.tools.update
 
+import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.runBlocking
 import me.him188.ani.app.platform.ContextMP
 import me.him188.ani.app.platform.ExecutableDirectoryDetector
@@ -21,7 +22,9 @@ import me.him188.ani.utils.logging.info
 import me.him188.ani.utils.logging.logger
 import me.him188.ani.utils.platform.Platform
 import java.io.File
+import java.util.concurrent.TimeUnit
 import kotlin.concurrent.thread
+import kotlin.coroutines.cancellation.CancellationException
 import kotlin.io.path.createTempDirectory
 import kotlin.system.exitProcess
 
@@ -304,7 +307,7 @@ object LinuxUpdateInstaller : DesktopUpdateInstaller {
         return InstallationResult.Succeed
     }
 
-    override fun install(
+    override suspend fun install(
         file: SystemPath,
         packageUrls: List<String>,
         context: ContextMP,
@@ -335,7 +338,7 @@ object LinuxUpdateInstaller : DesktopUpdateInstaller {
             return failed("Bundled AppImage update tool was not found: ${bundledUpdater.absolutePath}")
         }
 
-        return runCatching {
+        return try {
             val tempDir = createTempDirectory(prefix = "animeko-appimage-update-").toFile()
             val updater = tempDir.resolve(LINUX_APPIMAGE_UPDATE_TOOL)
             bundledUpdater.copyTo(updater)
@@ -357,19 +360,41 @@ object LinuxUpdateInstaller : DesktopUpdateInstaller {
                 .redirectErrorStream(true)
                 .redirectOutput(logFile)
                 .start()
-            val exitCode = process.waitFor()
+            val exitCode = waitForUpdateProcess(process)
             if (exitCode == 0) {
                 logger.info { "AppImage update completed successfully" }
                 exitProcessForUpdate(delayMillis = 0)
             } else {
                 failed("AppImage updater exited with code $exitCode. Log: ${logFile.absolutePath}")
             }
-        }.getOrElse { throwable ->
+        } catch (e: CancellationException) {
+            throw e
+        } catch (throwable: Throwable) {
             logger.error(throwable) { "Failed to launch AppImage updater" }
             InstallationResult.Failed(
                 InstallationFailureReason.FAILED_TO_COPY,
                 throwable.message,
             )
+        }
+    }
+
+    private suspend fun waitForUpdateProcess(process: Process): Int {
+        try {
+            return runInterruptible { process.waitFor() }
+        } catch (e: CancellationException) {
+            process.descendants().use { descendants ->
+                descendants.forEach { it.destroy() }
+            }
+            process.destroy()
+            runInterruptible {
+                if (!process.waitFor(5, TimeUnit.SECONDS)) {
+                    process.descendants().use { descendants ->
+                        descendants.forEach { it.destroyForcibly() }
+                    }
+                    process.destroyForcibly().waitFor()
+                }
+            }
+            throw e
         }
     }
 
@@ -390,16 +415,34 @@ internal fun List<String>.toAppImageZsyncUrls(): List<String> = map { url ->
 
 internal val LINUX_APPIMAGE_UPDATE_SCRIPT = $$"""
     #!/usr/bin/env bash
-    set -uo pipefail
+    set -euo pipefail
 
     APPIMAGE_PATH="$1"
     UPDATER_PATH="$2"
     shift 2
 
+    APPIMAGE_DIR="$(dirname "$APPIMAGE_PATH")"
+    APPIMAGE_NAME="$(basename "$APPIMAGE_PATH")"
+    WORK_DIR="$(mktemp -d --tmpdir="$APPIMAGE_DIR" ".${APPIMAGE_NAME}.update.XXXXXX")"
+    WORKING_APPIMAGE="$WORK_DIR/$APPIMAGE_NAME"
+
+    cleanup() {
+      rm -rf -- "$WORK_DIR"
+    }
+    trap cleanup EXIT
+    trap 'exit 130' INT TERM
+
+    # Keep the original path untouched while zsync downloads and rebuilds the new image.
+    # A hard link avoids copying the full AppImage; copy-on-write is used as a fallback.
+    if ! ln -- "$APPIMAGE_PATH" "$WORKING_APPIMAGE"; then
+      cp --reflink=auto --preserve=mode -- "$APPIMAGE_PATH" "$WORKING_APPIMAGE"
+    fi
+
     for UPDATE_INFORMATION in "$@"; do
-      if "$UPDATER_PATH" --overwrite --update-info "$UPDATE_INFORMATION" "$APPIMAGE_PATH"; then
-        chmod a+x "$APPIMAGE_PATH"
-        rm -f "$UPDATER_PATH"
+      if "$UPDATER_PATH" --overwrite --update-info "$UPDATE_INFORMATION" "$WORKING_APPIMAGE"; then
+        chmod a+x "$WORKING_APPIMAGE"
+        # WORKING_APPIMAGE and APPIMAGE_PATH are on the same filesystem, so this is an atomic commit.
+        mv -f -- "$WORKING_APPIMAGE" "$APPIMAGE_PATH"
         exit 0
       fi
     done
