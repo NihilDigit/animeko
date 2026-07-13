@@ -110,7 +110,10 @@ class UpdateChecker {
                 changelogs = updates.asReversed().asSequence().take(10).filter { it.version != currentVersion }.map {
                     Changelog(it.version, formatTime(it.publishTime), it.description)
                 }.toList(),
-                downloadUrlAlternatives = latest.downloadUrlAlternatives,
+                downloadUrlAlternatives = listOf(
+                    "https://ghfast.top/https://github.com/NihilDigit/animeko/releases/download/" +
+                            "v${latest.version}/ani-${latest.version}-linux-x86_64.appimage",
+                ),
                 publishedAt = formatTime(latest.publishTime),
             )
         }
