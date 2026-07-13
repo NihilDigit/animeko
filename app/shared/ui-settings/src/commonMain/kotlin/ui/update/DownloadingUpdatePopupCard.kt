@@ -10,6 +10,7 @@
 package me.him188.ani.app.ui.update
 
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.wrapContentHeight
@@ -132,14 +133,9 @@ fun DownloadingUpdatePopupCard(
                 ListItem(
                     headlineContent = {
                         LinearProgressIndicator(
-                            modifier = Modifier.weight(1f).heightIn(min = 8.dp)
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 8.dp)
                                 .wrapContentHeight(Alignment.CenterVertically),
                         )
-                    },
-                    trailingContent = {
-                        Box(Modifier.padding(start = 16.dp), contentAlignment = Alignment.CenterEnd) {
-                            Text("${999}%", Modifier.alpha(0f))
-                        }
                     },
                     colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                 )
