@@ -43,6 +43,7 @@ import org.openani.mediamp.InternalForInheritanceMediampApi
 import org.openani.mediamp.MediampPlayer
 import org.openani.mediamp.MediampPlayerFactory
 import org.openani.mediamp.PlaybackState
+import org.openani.mediamp.exoplayer.ExoPlayerAudioTimeStretch
 import org.openani.mediamp.exoplayer.ExoPlayerMediampPlayer
 import org.openani.mediamp.io.SeekableInput
 import org.openani.mediamp.source.MediaData
@@ -72,7 +73,12 @@ class LibassExoPlayerMediampPlayer private constructor(
     ) : this(
         context,
         parentCoroutineContext,
-        ExoPlayerMediampPlayer(context, parentCoroutineContext),
+        ExoPlayerMediampPlayer(
+            context,
+            parentCoroutineContext,
+            // High-quality WSOLA time-stretch; mediamp falls back to Sonic when unavailable.
+            ExoPlayerAudioTimeStretch.HighQualityWsola,
+        ),
     )
 
     internal val assHandler = AssHandler(
