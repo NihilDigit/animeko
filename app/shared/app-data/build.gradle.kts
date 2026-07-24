@@ -91,6 +91,11 @@ kotlin {
     sourceSets.desktopMain {
         dependencies {
             implementation(libs.onnxruntime)
+            if (getOs() == Os.Windows && getArch() == Arch.AARCH64) {
+                // AndroidX sqlite-bundled-jvm 没有 Windows ARM64 native 库, 引入预编译的 sqliteJni.dll.
+                // 详见 ci-helper/sqlite-woa64/build-sqlite-jni-woa64.ps1 的头注释
+                runtimeOnly(projects.ciHelper.sqliteWoa64)
+            }
         }
     }
     sourceSets.desktopTest {

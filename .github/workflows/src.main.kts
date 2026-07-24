@@ -522,6 +522,7 @@ run {
 
     releaseMatrixInstances = listOf(
         ghWin, // win installer
+        ghWinArm64, // win ARM64 portable
         selfMac15.copy(
             buildAllAndroidAbis = true,
             uploadApk = false,
@@ -664,8 +665,8 @@ fun getVerifyJobBody(
             step = "Check that MediaMP FFmpeg can run",
             enabledOnlyOn = listOf(Runner.GithubWindows11Arm64),
         ),
-        // Windows ARM64 relies on an external SQLite patch (AndroidX does not ship Windows ARM64 natives),
-        // so verify that the patched bundled SQLite loads correctly.
+        // Windows ARM64 relies on the prebuilt SQLite natives from :ci-helper:sqlite-woa64
+        // (AndroidX does not ship Windows ARM64 natives), so verify that the bundled SQLite loads correctly.
         VerifyTask(
             name = "dandanplay-app-id",
             step = "Check that Dandanplay APP ID is valid",
@@ -1020,6 +1021,7 @@ workflow(
             deleteLocalProperties()
             writeLocalProperties()
             updateJvmArgsInGradleProperties()
+            setupAndroidSdkForWindowsArm64()
             installJbr21()
             chmod777()
             setupGradle()
@@ -1799,21 +1801,6 @@ class WithMatrix(
     class PackageDesktopAndUploadOutputs {
     }
 
-    fun JobBuilder<*>.patchBundledSqliteForWindowsArm64() {
-        if (matrix.isWindowsAArch64) {
-            // AndroidX does not yet publish the bundled SQLite native library for Windows ARM64.
-            run(
-                name = "Patch AndroidX SQLite bundled runtime for Windows ARM64",
-                shell = Shell.PowerShell,
-                command = shell(
-                    """
-                    powershell.exe -NoProfile -ExecutionPolicy Bypass -File ci-helper/sqlite-woa64/patch-sqlite-bundled-windows-arm64.ps1 app/desktop/build/compose/binaries/main-release/app
-                    """.trimIndent(),
-                ),
-            )
-        }
-    }
-
     fun JobBuilder<*>.packageDesktopAndUpload(): PackageDesktopAndUploadOutputs {
         if (matrix.isWindows) {
             // Windows does not support installers
@@ -1846,7 +1833,6 @@ class WithMatrix(
             )
         }
 
-        patchBundledSqliteForWindowsArm64()
         uploadComposeLogs()
 
         return PackageDesktopAndUploadOutputs().also {

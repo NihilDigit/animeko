@@ -7,13 +7,32 @@
   https://github.com/open-ani/ani/blob/main/LICENSE
 #>
 
-param(
-    [Parameter(Mandatory = $true)]
-    [string]$PackageDirectory
-)
+# 在 Windows 上用 MSVC 重建本目录的 sqliteJni.dll (Windows ARM64).
+# 需要: PowerShell 7+ (pwsh), Visual Studio "C++ ARM64 build tools" 组件, JAVA_HOME 指向 JDK.
+# 注意: Windows 自带的 Windows PowerShell 5.1 可能缺少 Get-FileHash
+# (Microsoft.PowerShell.Utility 不完整), 请用 pwsh 运行本脚本:
+#   pwsh -NoProfile -ExecutionPolicy Bypass -File ci-helper/sqlite-woa64/build-sqlite-jni-woa64.ps1
+#
+# 背景:
+# AndroidX sqlite-bundled-jvm 只发布 Windows x64 / Linux / macOS 的 native 库 (2.6.1 ~ 2.7.0
+# 均无 natives/windows_arm64/sqliteJni.dll), 导致 WoA64 上 BundledSQLiteDriver 无法加载.
+# 由于 NativeLibraryLoader 是通过 classloader 查找该资源, 我们把预编译 DLL 打成资源 jar
+# (模块 :ci-helper:sqlite-woa64), 由 app-data 在 Windows ARM64 主机上 runtimeOnly 引入,
+# run / test / 打包 / 发版全部生效, 无需修改官方 jar.
+# AndroidX 官方发布 windows_arm64 后, 删除本目录、模块注册和 app-data 中的 runtimeOnly 即可.
+#
+# DLL 内容: SQLite 3.50.1 amalgamation + androidx.sqlite 2.6.2 的 sqlite_bindings.cpp,
+# 编译宏与 AndroidX 官方构建一致, 源码以下方 sha256 钉死.
+# 本脚本使用 /Brepro, 相同源码与工具链下构建字节级可复现;
+# 更新 DLL 提交前请连续构建两次, 确认输出的 sha256 一致.
+#
+# 何时重建: 升级 gradle/libs.versions.toml 的 sqlite 版本时, 核对该版本对应的
+# sqlite_bindings.cpp 是否有变化, 有则更新下方 commit / 哈希并重新运行本脚本.
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
+
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 
 function Invoke-WithRetry {
     param(
@@ -54,12 +73,6 @@ function Assert-Sha256 {
     }
 }
 
-$sqliteJars = @(Get-ChildItem -LiteralPath $PackageDirectory -Recurse -Filter "sqlite-bundled-jvm-*.jar")
-if ($sqliteJars.Count -ne 1) {
-    throw "Expected exactly one sqlite-bundled-jvm jar under $PackageDirectory, found $($sqliteJars.Count)."
-}
-$sqliteJar = $sqliteJars[0]
-
 $outputDir = "build/sqlite-woa64"
 $workDir = Join-Path $outputDir "work"
 New-Item -ItemType Directory -Force -Path $workDir | Out-Null
@@ -73,7 +86,7 @@ $sqliteZip = Join-Path $workDir "sqlite-amalgamation-$sqliteZipVersion.zip"
 $sqliteDir = Join-Path $workDir "sqlite-amalgamation-$sqliteZipVersion"
 $sqliteC = Join-Path $sqliteDir "sqlite3.c"
 
-$androidxSqlite262Commit = "fe30df161d480829efb21f37ff67a9f8cac9c620"
+$androidxSqliteCommit = "fe30df161d480829efb21f37ff67a9f8cac9c620" # androidx.sqlite 2.6.2
 $androidxBindingHash = "F9F4747111A6635DFFD5991126247CA0F2F6C851DE1EAF4ADD3866A0518AC2E0"
 $binding = Join-Path $workDir "sqlite_bindings.cpp"
 
@@ -107,7 +120,7 @@ if (!(Test-Path $binding)) {
         -Script {
             (Invoke-WebRequest `
                     -UseBasicParsing `
-                    -Uri "https://android.googlesource.com/platform/frameworks/support/+/$androidxSqlite262Commit/sqlite/sqlite-bundled/src/jvmAndroidMain/jni/sqlite_bindings.cpp?format=TEXT").Content.Trim()
+                    -Uri "https://android.googlesource.com/platform/frameworks/support/+/$androidxSqliteCommit/sqlite/sqlite-bundled/src/jvmAndroidMain/jni/sqlite_bindings.cpp?format=TEXT").Content.Trim()
         }
     [System.IO.File]::WriteAllBytes($binding, [System.Convert]::FromBase64String($encodedBinding))
 }
@@ -153,9 +166,9 @@ $sqliteDefines = @(
 
 $compile = @(
     "`"$vcvars`" arm64",
-    "cl /nologo /O2 /MT /utf-8 $sqliteDefines /I`"$sqliteDir`" /Fo`"$sqliteObj`" /c `"$sqliteC`"",
-    "cl /nologo /O2 /MT /EHsc /std:c++17 /utf-8 $sqliteDefines /I`"$sqliteDir`" /I`"$javaInclude`" /I`"$javaWinInclude`" /Fo`"$bindingObj`" /c `"$binding`"",
-    "link /nologo /DLL /OUT:`"$sqliteDll`" /IMPLIB:`"$outputDir\sqliteJni.lib`" `"$sqliteObj`" `"$bindingObj`""
+    "cl /nologo /O2 /Brepro /MT /utf-8 $sqliteDefines /I`"$sqliteDir`" /Fo`"$sqliteObj`" /c `"$sqliteC`"",
+    "cl /nologo /O2 /Brepro /MT /EHsc /std:c++17 /utf-8 $sqliteDefines /I`"$sqliteDir`" /I`"$javaInclude`" /I`"$javaWinInclude`" /Fo`"$bindingObj`" /c `"$binding`"",
+    "link /nologo /Brepro /DLL /OUT:`"$sqliteDll`" /IMPLIB:`"$outputDir\sqliteJni.lib`" `"$sqliteObj`" `"$bindingObj`""
 ) -join " && "
 
 cmd.exe /d /s /c $compile
@@ -163,25 +176,6 @@ if ($LASTEXITCODE -ne 0) {
     throw "Failed to build Windows ARM64 AndroidX SQLite JNI runtime."
 }
 
-Add-Type -AssemblyName System.IO.Compression
-Add-Type -AssemblyName System.IO.Compression.FileSystem
-
-$entryName = "natives/windows_arm64/sqliteJni.dll"
-$zip = [System.IO.Compression.ZipFile]::Open($sqliteJar.FullName, [System.IO.Compression.ZipArchiveMode]::Update)
-try {
-    $existing = $zip.GetEntry($entryName)
-    if ($null -ne $existing) {
-        $existing.Delete()
-    }
-    [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
-        $zip,
-        (Resolve-Path -LiteralPath $sqliteDll).Path,
-        $entryName,
-        [System.IO.Compression.CompressionLevel]::Optimal
-    ) | Out-Null
-}
-finally {
-    $zip.Dispose()
-}
-
-Write-Host "Patched $($sqliteJar.FullName) with $entryName"
+Copy-Item -Force $sqliteDll (Join-Path $scriptDir "sqliteJni.dll")
+Write-Host "Written: $scriptDir\sqliteJni.dll"
+(Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $scriptDir "sqliteJni.dll")).Hash
