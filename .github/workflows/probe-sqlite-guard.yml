@@ -1,0 +1,63 @@
+# Throwaway probe: runs only the sqlite guard ordering test on Linux.
+# Not intended to be merged. Lives only on probe/** branches.
+name: 'Probe SQLite Guard'
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'probe/**'
+jobs:
+  probe:
+    name: 'SQLite guard ordering (Ubuntu 24.04)'
+    runs-on:
+      - 'ubuntu-24.04'
+    steps:
+      - uses: 'actions/checkout@v4'
+        with:
+          submodules: 'recursive'
+      - name: 'Free space for Ubuntu'
+        uses: 'jlumbroso/free-disk-space@v1.3.1'
+        with:
+          android: 'false'
+          large-packages: 'false'
+          tool-cache: 'false'
+      - continue-on-error: true
+        run: 'rm local.properties'
+      - run: |
+          echo "ani.android.abis=x86_64" >> local.properties
+          echo "kotlin.native.ignoreDisabledTargets=true" >> local.properties
+          echo "jvm.toolchain.version=21" >> local.properties
+      - id: 'jbr'
+        name: 'Get JBR'
+        env:
+          RUNNER_TOOL_CACHE: '${{ runner.tool_cache }}'
+          JBR_URL: 'https://cache-redirector.jetbrains.com/intellij-jbr/jbrsdk_jcef-21.0.11-linux-x64-b1163.116.tar.gz'
+          JBR_CHECKSUM_URL: 'https://cache-redirector.jetbrains.com/intellij-jbr/jbrsdk_jcef-21.0.11-linux-x64-b1163.116.tar.gz.checksum'
+        shell: 'bash'
+        run: 'python .github/workflows/download_jbr.py'
+      - name: 'Setup JBR 21'
+        uses: 'gmitch215/setup-java@6d2c5e1f82f180ae79f799f0ed6e3e5efb4e664d'
+        with:
+          java-version: '21'
+          distribution: 'jdkfile'
+          jdkFile: '${{ steps.jbr.outputs.jbrLocation }}'
+        env:
+          GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
+      - run: 'chmod -R 777 .'
+      - name: 'Setup Gradle'
+        uses: 'gradle/actions/setup-gradle@v3'
+        with:
+          cache-disabled: 'true'
+      # Own JVM: BundledSqliteInterpositionGuard.install is process-global and idempotent, so any
+      # other test installing it first would mask a missing hook. See the test's KDoc.
+      - name: 'Guard ordering test'
+        timeout-minutes: 90
+        run: >-
+          ./gradlew :app:shared:app-data:desktopTest
+          --tests "*DatabaseStorageGuardOrderingTest*"
+          "--stacktrace" "-Dfile.encoding=UTF-8"
+          "-Dorg.gradle.jvmargs=-Xmx8g -Dkotlin.daemon.jvm.options=-Xmx6g"
+          "-Dkotlin.daemon.jvm.options=-Xmx6g"
+      - name: 'Show /proc/self/maps assertion outcome'
+        if: '${{ always() }}'
+        run: 'cat app/shared/app-data/build/test-results/desktopTest/*DatabaseStorageGuardOrderingTest.xml || true'
