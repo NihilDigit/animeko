@@ -52,6 +52,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import me.him188.ani.app.data.models.preference.DarkMode
 import me.him188.ani.app.data.models.preference.UISettings
+import me.him188.ani.app.data.persistent.database.BundledSqliteInterpositionGuard
 import me.him188.ani.app.data.repository.SavedWindowState
 import me.him188.ani.app.data.repository.WindowStateRepository
 import me.him188.ani.app.data.repository.user.SettingsRepository
@@ -205,6 +206,13 @@ object AniDesktop {
         logger.info { "dataDir: file://${dataDir.absolutePathString().replace(" ", "%20")}" }
         logger.info { "cacheDir: file://${cacheDir.absolutePathString().replace(" ", "%20")}" }
         logger.info { "logsDir: file://${logsDir.absolutePath.replace(" ", "%20")}" }
+
+        // Covers constraint 2 (before JCEF/NSS), which no call site downstream of here can enforce.
+        // Deliberately above createAppRootCoroutineScope(): once coroutines exist, any of them may
+        // reach sqlite before this line does, which is exactly how #3195 regressed. See the guard's
+        // KDoc for both ordering constraints.
+        BundledSqliteInterpositionGuard.install(cacheDir)
+
         val coroutineScope = createAppRootCoroutineScope()
 
         coroutineScope.launch(Dispatchers.IO) {
@@ -236,10 +244,6 @@ object AniDesktop {
             ExtraWindowProperties(),
         )
         startupTimeMonitor.mark(StepName.WindowAndContext)
-
-        // Koin startup launches jobs that may access Room immediately. Install this guard
-        // synchronously before Koin so AndroidX cannot load a second sqlite JNI image first.
-        BundledSqliteInterpositionGuard.install(cacheDir)
 
         SingleInstanceChecker.instance.ensureSingleInstance()
         startupTimeMonitor.mark(StepName.SingletonChecker)
