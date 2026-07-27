@@ -2013,6 +2013,7 @@ class WithMatrix(
             if (matrix.uploadApk) {
                 runGradle(
                     name = "Upload Android APK for Release",
+                    `if` = expr { github.isAnimekoRepository },
                     tasks = arrayOf(":ci-helper:uploadAndroidApk", "\"--no-configuration-cache\""),
                     env = ciHelperSecrets,
                 )
@@ -2039,7 +2040,7 @@ class WithMatrix(
                 )
                 runGradle(
                     name = "Upload QR code",
-                    `if` = condition,
+                    `if` = expr { github.isAnimekoRepository },
                     tasks = arrayOf(":ci-helper:uploadAndroidApkQR", "\"--no-configuration-cache\""),
                     env = ciHelperSecrets,
                 )
@@ -2061,7 +2062,7 @@ class WithMatrix(
                 )
                 runGradle(
                     name = "Upload QR code",
-                    `if` = condition,
+                    `if` = expr { github.isAnimekoRepository },
                     tasks = arrayOf(":ci-helper:uploadIosIpaQR", "\"--no-configuration-cache\""),
                     env = ciHelperSecrets,
                 )
@@ -2072,6 +2073,7 @@ class WithMatrix(
             if (matrix.uploadDesktopInstallers) {
                 runGradle(
                     name = "Upload Desktop Installers",
+                    `if` = expr { github.isAnimekoRepository },
                     tasks = arrayOf(":ci-helper:uploadDesktopInstallers", "\"--no-configuration-cache\""),
                     env = ciHelperSecrets,
                 )

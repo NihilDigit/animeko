@@ -266,6 +266,7 @@ jobs:
       continue-on-error: true
       timeout-minutes: 180
       run: './gradlew :ci-helper:uploadDesktopInstallers "--no-configuration-cache" "--scan" "-Porg.gradle.daemon.idletimeout=60000" "-Dfile.encoding=UTF-8" "-DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake" "-DBoost_INCLUDE_DIR=C:/vcpkg/installed/x64-windows/include" "-Dorg.gradle.jvmargs=-Xmx4g -Dkotlin.daemon.jvm.options=-Xmx4g" "-Dkotlin.daemon.jvm.options=-Xmx4g" "--parallel"'
+      if: '${{ github.repository == ''open-ani/animeko'' }}'
     - id: 'step-20'
       name: 'Upload Desktop Installers (Attempt #2)'
       env:
@@ -1088,6 +1089,7 @@ jobs:
       continue-on-error: true
       timeout-minutes: 180
       run: './gradlew :ci-helper:uploadDesktopInstallers "--no-configuration-cache" "--scan" "-Porg.gradle.daemon.idletimeout=60000" "-Dfile.encoding=UTF-8" "-Dorg.gradle.jvmargs=-Xmx4g -Dkotlin.daemon.jvm.options=-Xmx4g" "-Dkotlin.daemon.jvm.options=-Xmx4g"'
+      if: '${{ github.repository == ''open-ani/animeko'' }}'
     - id: 'step-22'
       name: 'Upload Desktop Installers (Attempt #2)'
       env:
@@ -1343,6 +1345,7 @@ jobs:
       continue-on-error: true
       timeout-minutes: 180
       run: './gradlew :ci-helper:uploadDesktopInstallers "--no-configuration-cache" "--scan" "-Porg.gradle.daemon.idletimeout=60000" "-Dfile.encoding=UTF-8" "-Dorg.gradle.jvmargs=-Xmx6g -Dkotlin.daemon.jvm.options=-Xmx6g" "-Dkotlin.daemon.jvm.options=-Xmx6g"'
+      if: '${{ github.repository == ''open-ani/animeko'' }}'
     - id: 'step-22'
       name: 'Upload Desktop Installers (Attempt #2)'
       env:
@@ -1815,6 +1818,7 @@ jobs:
       continue-on-error: true
       timeout-minutes: 180
       run: './gradlew :ci-helper:uploadAndroidApk "--no-configuration-cache" "--scan" "-Porg.gradle.daemon.idletimeout=60000" "-Dfile.encoding=UTF-8" "-Dorg.gradle.jvmargs=-Xmx8g -Dkotlin.daemon.jvm.options=-Xmx6g" "-Dkotlin.daemon.jvm.options=-Xmx6g"'
+      if: '${{ github.repository == ''open-ani/animeko'' }}'
     - id: 'step-52'
       name: 'Upload Android APK for Release (Attempt #2)'
       env:
@@ -1874,6 +1878,7 @@ jobs:
       continue-on-error: true
       timeout-minutes: 180
       run: './gradlew :ci-helper:uploadAndroidApkQR "--no-configuration-cache" "--scan" "-Porg.gradle.daemon.idletimeout=60000" "-Dfile.encoding=UTF-8" "-Dorg.gradle.jvmargs=-Xmx8g -Dkotlin.daemon.jvm.options=-Xmx6g" "-Dkotlin.daemon.jvm.options=-Xmx6g"'
+      if: '${{ github.repository == ''open-ani/animeko'' }}'
     - id: 'step-56'
       name: 'Upload QR code (Attempt #2)'
       env:
@@ -1933,6 +1938,7 @@ jobs:
       continue-on-error: true
       timeout-minutes: 180
       run: './gradlew :ci-helper:uploadIosIpaQR "--no-configuration-cache" "--scan" "-Porg.gradle.daemon.idletimeout=60000" "-Dfile.encoding=UTF-8" "-Dorg.gradle.jvmargs=-Xmx8g -Dkotlin.daemon.jvm.options=-Xmx6g" "-Dkotlin.daemon.jvm.options=-Xmx6g"'
+      if: '${{ github.repository == ''open-ani/animeko'' }}'
     - id: 'step-60'
       name: 'Upload QR code (Attempt #2)'
       env:
@@ -2078,6 +2084,7 @@ jobs:
       continue-on-error: true
       timeout-minutes: 180
       run: './gradlew :ci-helper:uploadDesktopInstallers "--no-configuration-cache" "--scan" "-Porg.gradle.daemon.idletimeout=60000" "-Dfile.encoding=UTF-8" "-Dorg.gradle.jvmargs=-Xmx8g -Dkotlin.daemon.jvm.options=-Xmx6g" "-Dkotlin.daemon.jvm.options=-Xmx6g"'
+      if: '${{ github.repository == ''open-ani/animeko'' }}'
     - id: 'step-69'
       name: 'Upload Desktop Installers (Attempt #2)'
       env:
