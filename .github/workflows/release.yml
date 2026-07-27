@@ -49,6 +49,10 @@ jobs:
       env:
         OPENAI_API_KEY: '${{ secrets.OPENAI_API_KEY }}'
       run: |-
+        if [ -z "$OPENAI_API_KEY" ]; then
+          echo "OPENAI_API_KEY not set, skipping Codex CLI setup"
+          exit 0
+        fi
         npm install -g @openai/codex@latest
         printenv OPENAI_API_KEY | codex login --with-api-key
     - id: 'step-4'
@@ -64,7 +68,12 @@ jobs:
       run: |-
         set -euo pipefail
 
-        export RELEASE_NOTES="$(ci-helper/generate-release-notes-with-codex.sh "${{ steps.step-1.outputs.tag }}" "${{ steps.step-2.outputs.substring }}")"
+        if [ -n "$OPENAI_API_KEY" ]; then
+          export RELEASE_NOTES="$(ci-helper/generate-release-notes-with-codex.sh "${{ steps.step-1.outputs.tag }}" "${{ steps.step-2.outputs.substring }}")"
+        else
+          echo "OPENAI_API_KEY not set, using fallback release notes"
+          export RELEASE_NOTES="- Bump mediamp to 0.2.1"
+        fi
 
         python3 - <<'PY' > "$RUNNER_TEMP/release-body.md"
         import os

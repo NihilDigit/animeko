@@ -943,6 +943,10 @@ workflow(
             name = "Install and Authenticate Codex CLI",
             command = shell(
                 $$"""
+                  if [ -z "$OPENAI_API_KEY" ]; then
+                    echo "OPENAI_API_KEY not set, skipping Codex CLI setup"
+                    exit 0
+                  fi
                   npm install -g @openai/codex@latest
                   printenv OPENAI_API_KEY | codex login --with-api-key
             """.trimIndent(),
@@ -958,7 +962,12 @@ workflow(
                 $$"""
                   set -euo pipefail
 
-                  export RELEASE_NOTES="$(ci-helper/generate-release-notes-with-codex.sh "$${expr { gitTag.tagExpr }}" "$${expr { gitTag.tagVersionExpr }}")"
+                  if [ -n "$OPENAI_API_KEY" ]; then
+                    export RELEASE_NOTES="$(ci-helper/generate-release-notes-with-codex.sh "$${expr { gitTag.tagExpr }}" "$${expr { gitTag.tagVersionExpr }}")"
+                  else
+                    echo "OPENAI_API_KEY not set, using fallback release notes"
+                    export RELEASE_NOTES="- Bump mediamp to 0.2.1"
+                  fi
 
                   python3 - <<'PY' > "$RUNNER_TEMP/release-body.md"
                   import os
