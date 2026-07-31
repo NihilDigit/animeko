@@ -2017,7 +2017,6 @@ jobs:
       run: './gradlew :ci-helper:uploadAndroidApk "--no-configuration-cache" "--scan" "-Porg.gradle.daemon.idletimeout=60000" "-Dfile.encoding=UTF-8" "-Dorg.gradle.jvmargs=-Xmx8g -Dkotlin.daemon.jvm.options=-Xmx6g" "-Dkotlin.daemon.jvm.options=-Xmx6g"'
     - id: 'step-52'
       name: 'Upload Android APK for Release (Attempt #2)'
-      if: '${{ github.repository == ''open-ani/animeko'' && steps.step-51.outcome == ''failure'' }}'
       env:
         GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
         GITHUB_REPOSITORY: '${{ secrets.GITHUB_REPOSITORY }}'
@@ -2080,7 +2079,6 @@ jobs:
       run: './gradlew :ci-helper:uploadAndroidApkQR "--no-configuration-cache" "--scan" "-Porg.gradle.daemon.idletimeout=60000" "-Dfile.encoding=UTF-8" "-Dorg.gradle.jvmargs=-Xmx8g -Dkotlin.daemon.jvm.options=-Xmx6g" "-Dkotlin.daemon.jvm.options=-Xmx6g"'
     - id: 'step-56'
       name: 'Upload QR code (Attempt #2)'
-      if: '${{ github.repository == ''open-ani/animeko'' && steps.step-55.outcome == ''failure'' }}'
       env:
         GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
         GITHUB_REPOSITORY: '${{ secrets.GITHUB_REPOSITORY }}'
@@ -2143,7 +2141,6 @@ jobs:
       run: './gradlew :ci-helper:uploadIosIpaQR "--no-configuration-cache" "--scan" "-Porg.gradle.daemon.idletimeout=60000" "-Dfile.encoding=UTF-8" "-Dorg.gradle.jvmargs=-Xmx8g -Dkotlin.daemon.jvm.options=-Xmx6g" "-Dkotlin.daemon.jvm.options=-Xmx6g"'
     - id: 'step-60'
       name: 'Upload QR code (Attempt #2)'
-      if: '${{ github.repository == ''open-ani/animeko'' && steps.step-59.outcome == ''failure'' }}'
       env:
         GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
         GITHUB_REPOSITORY: '${{ secrets.GITHUB_REPOSITORY }}'
