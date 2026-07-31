@@ -1982,7 +1982,9 @@ class WithMatrix(
             "GITHUB_REPOSITORY" to expr { secrets.GITHUB_REPOSITORY },
             "CI_RELEASE_ID" to expr { releaseIdExpr },
             "CI_TAG" to expr { gitTag.tagExpr },
-            "UPLOAD_TO_S3" to "true",
+            // Fork releases should only publish GitHub assets. The bucket credentials are
+            // intentionally unavailable there, so keep all cloud uploads disabled.
+            "UPLOAD_TO_S3" to expr { github.isAnimekoRepository },
             "AWS_ACCESS_KEY_ID" to expr { secrets.AWS_ACCESS_KEY_ID },
             "AWS_SECRET_ACCESS_KEY" to expr { secrets.AWS_SECRET_ACCESS_KEY },
             "AWS_BASEURL" to expr { secrets.AWS_BASEURL },
@@ -2001,6 +2003,7 @@ class WithMatrix(
             if (matrix.uploadApk) {
                 runGradle(
                     name = "Upload Android APK for Release",
+                    `if` = expr { github.isAnimekoRepository },
                     tasks = arrayOf(":ci-helper:uploadAndroidApk", "\"--no-configuration-cache\""),
                     env = ciHelperSecrets,
                 )
@@ -2011,7 +2014,7 @@ class WithMatrix(
             if (matrix.uploadApk and matrix.buildAllAndroidAbis) {
                 uses(
                     name = "Generate QR code for APK (GitHub)",
-                    `if` = condition,
+                    `if` = expr { github.isAnimekoRepository },
                     action = Qrcode_Untyped(
                         text_Untyped = """https://github.com/open-ani/animeko/releases/download/${expr { gitTag.tagExpr }}/ani-${expr { gitTag.tagVersionExpr }}-universal.apk""",
                         path_Untyped = "apk-qrcode-github.png",
@@ -2019,7 +2022,7 @@ class WithMatrix(
                 )
                 uses(
                     name = "Generate QR code for APK (Cloudflare)",
-                    `if` = condition,
+                    `if` = expr { github.isAnimekoRepository },
                     action = Qrcode_Untyped(
                         text_Untyped = """https://d.myani.org/${expr { gitTag.tagExpr }}/ani-${expr { gitTag.tagVersionExpr }}-universal.apk""",
                         path_Untyped = "apk-qrcode-cloudflare.png",
@@ -2027,13 +2030,13 @@ class WithMatrix(
                 )
                 runGradle(
                     name = "Upload QR code",
-                    `if` = condition,
+                    `if` = expr { github.isAnimekoRepository },
                     tasks = arrayOf(":ci-helper:uploadAndroidApkQR", "\"--no-configuration-cache\""),
                     env = ciHelperSecrets,
                 )
                 uses(
                     name = "Generate QR code for iOS (GitHub)",
-                    `if` = condition,
+                    `if` = expr { github.isAnimekoRepository },
                     action = Qrcode_Untyped(
                         text_Untyped = """https://github.com/open-ani/animeko/releases/download/${expr { gitTag.tagExpr }}/ani-${expr { gitTag.tagVersionExpr }}.ipa""",
                         path_Untyped = "ipa-qrcode-github.png",
@@ -2041,7 +2044,7 @@ class WithMatrix(
                 )
                 uses(
                     name = "Generate QR code for iOS (Cloudflare)",
-                    `if` = condition,
+                    `if` = expr { github.isAnimekoRepository },
                     action = Qrcode_Untyped(
                         text_Untyped = """https://d.myani.org/${expr { gitTag.tagExpr }}/ani-${expr { gitTag.tagVersionExpr }}.ipa""",
                         path_Untyped = "ipa-qrcode-cloudflare.png",
@@ -2049,7 +2052,7 @@ class WithMatrix(
                 )
                 runGradle(
                     name = "Upload QR code",
-                    `if` = condition,
+                    `if` = expr { github.isAnimekoRepository },
                     tasks = arrayOf(":ci-helper:uploadIosIpaQR", "\"--no-configuration-cache\""),
                     env = ciHelperSecrets,
                 )
