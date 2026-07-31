@@ -45,14 +45,19 @@ jobs:
         index_of_str: 'v'
         default_return_value: '${{ steps.step-1.outputs.tag }}'
     - id: 'step-3'
-      name: 'Install and Authenticate Codex CLI'
+      name: 'Install and Authenticate Codex CLI (if configured)'
       env:
         OPENAI_API_KEY: '${{ secrets.OPENAI_API_KEY }}'
       run: |-
+        if [[ -z "${OPENAI_API_KEY:-}" ]]; then
+          echo "OPENAI_API_KEY is not configured; skipping Codex authentication."
+          exit 0
+        fi
+
         npm install -g @openai/codex@latest
         printenv OPENAI_API_KEY | codex login --with-api-key
     - id: 'step-4'
-      name: 'Generate Release Notes with Codex'
+      name: 'Generate Release Notes with Codex (or fallback)'
       env:
         GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
         GH_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
@@ -64,7 +69,11 @@ jobs:
       run: |-
         set -euo pipefail
 
-        export RELEASE_NOTES="$(ci-helper/generate-release-notes-with-codex.sh "${{ steps.step-1.outputs.tag }}" "${{ steps.step-2.outputs.substring }}")"
+        if [[ -n "${OPENAI_API_KEY:-}" ]]; then
+          export RELEASE_NOTES="$(ci-helper/generate-release-notes-with-codex.sh "${{ steps.step-1.outputs.tag }}" "${{ steps.step-2.outputs.substring }}")"
+        else
+          export RELEASE_NOTES="Automated release for ${TAG_VERSION} from ${GIT_TAG}. Codex release notes generation was skipped because OPENAI_API_KEY is not configured."
+        fi
 
         python3 - <<'PY' > "$RUNNER_TEMP/release-body.md"
         import os

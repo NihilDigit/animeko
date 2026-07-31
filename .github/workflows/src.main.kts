@@ -943,9 +943,14 @@ workflow(
         val gitTag = getGitTag()
 
         run(
-            name = "Install and Authenticate Codex CLI",
+            name = "Install and Authenticate Codex CLI (if configured)",
             command = shell(
                 $$"""
+                  if [[ -z "${OPENAI_API_KEY:-}" ]]; then
+                    echo "OPENAI_API_KEY is not configured; skipping Codex authentication."
+                    exit 0
+                  fi
+
                   npm install -g @openai/codex@latest
                   printenv OPENAI_API_KEY | codex login --with-api-key
             """.trimIndent(),
@@ -956,12 +961,16 @@ workflow(
         )
 
         val releaseNotes = run(
-            name = "Generate Release Notes with Codex",
+            name = "Generate Release Notes with Codex (or fallback)",
             command = shell(
                 $$"""
                   set -euo pipefail
 
-                  export RELEASE_NOTES="$(ci-helper/generate-release-notes-with-codex.sh "$${expr { gitTag.tagExpr }}" "$${expr { gitTag.tagVersionExpr }}")"
+                  if [[ -n "${OPENAI_API_KEY:-}" ]]; then
+                    export RELEASE_NOTES="$(ci-helper/generate-release-notes-with-codex.sh "$${expr { gitTag.tagExpr }}" "$${expr { gitTag.tagVersionExpr }}")"
+                  else
+                    export RELEASE_NOTES="Automated release for ${TAG_VERSION} from ${GIT_TAG}. Codex release notes generation was skipped because OPENAI_API_KEY is not configured."
+                  fi
 
                   python3 - <<'PY' > "$RUNNER_TEMP/release-body.md"
                   import os
