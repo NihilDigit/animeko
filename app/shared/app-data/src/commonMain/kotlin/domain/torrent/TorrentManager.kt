@@ -39,7 +39,8 @@ enum class TorrentEngineType(
     val id: String,
 ) {
     Anitorrent("anitorrent"),
-    RemoteAnitorrent("anitorrent")
+    RemoteAnitorrent("anitorrent"),
+    PikPak("pikpak")
 }
 
 /**
@@ -53,6 +54,7 @@ class DefaultTorrentManager(
     subscriptionRepository: PeerFilterSubscriptionRepository,
     meteredNetworkDetector: MeteredNetworkDetector,
     baseSaveDir: () -> SystemPath,
+    private val pikpak: TorrentEngine? = null,
 ) : TorrentManager {
     private val scope = parentCoroutineContext.childScope()
     private val logger = logger<DefaultTorrentManager>()
@@ -84,13 +86,13 @@ class DefaultTorrentManager(
     }
 
     override val engines: List<TorrentEngine> by lazy {
-        // 注意, 是故意只启用一个下载器的, 因为每个下载器都会创建一个 DirectoryMediaCacheStorage
-        // 并且使用相同的 mediaSourceId: MediaCacheManager.LOCAL_FS_MEDIA_SOURCE_ID.
-        // 搜索数据源时会使用 mediaSourceId 作为 map key, 导致总是只会用一个 storage.
-        // 
-        // 如果要支持多个, 需要考虑将所有 storage 合并成一个 MediaSource.
-
-        listOf(anitorrent)
+        // 每个引擎都会有一个 storage, 它们共用 MediaCacheManager.LOCAL_FS_MEDIA_SOURCE_ID.
+        // 这是安全的: MediaFetcher 遍历 MediaSourceInstance 列表, 不按 mediaSourceId 建 map,
+        // 同 id 的多个实例都会参与 fetch. HttpMediaCacheStorage 早就与 torrent storage 同 id 并存.
+        // 见 MediaFetcherSameSourceIdTest.
+        //
+        // PikPak 排在前面: 它启用时应当接管 BT 源, anitorrent 只作回退.
+        listOfNotNull(pikpak, anitorrent)
     }
 
     companion object {
@@ -102,6 +104,7 @@ class DefaultTorrentManager(
             meteredNetworkDetector: MeteredNetworkDetector,
             baseSaveDir: () -> SystemPath,
             torrentEngineFactory: TorrentEngineFactory = LocalAnitorrentEngineFactory,
+            pikpak: TorrentEngine? = null,
         ): DefaultTorrentManager {
             return DefaultTorrentManager(
                 parentCoroutineContext = parentCoroutineContext,
@@ -111,6 +114,7 @@ class DefaultTorrentManager(
                 meteredNetworkDetector = meteredNetworkDetector,
                 subscriptionRepository = subscriptionRepository,
                 baseSaveDir = baseSaveDir,
+                pikpak = pikpak,
             )
         }
     }

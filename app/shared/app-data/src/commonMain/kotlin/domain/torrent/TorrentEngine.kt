@@ -33,6 +33,7 @@ import me.him188.ani.app.torrent.api.peer.PeerFilter
 import me.him188.ani.app.torrent.api.peer.PeerInfo
 import me.him188.ani.datasources.api.source.MediaSourceLocation
 import me.him188.ani.utils.coroutines.childScope
+import me.him188.ani.utils.io.SystemPath
 import me.him188.ani.utils.coroutines.onReplacement
 import me.him188.ani.utils.ktor.ScopedHttpClient
 import me.him188.ani.utils.logging.debug
@@ -62,6 +63,14 @@ interface TorrentEngine : AutoCloseable {
      * 是否被当前平台支持
      */
     val isSupported: Boolean
+
+    /**
+     * 该引擎的数据根目录.
+     *
+     * 用于在不唤醒引擎的前提下判断磁盘上是否有该引擎的残留. 安卓上唤醒 anitorrent 意味着启动
+     * `AniTorrentService` 并弹出前台通知, 只为了确认「没有东西要清理」而付这个代价不合适.
+     */
+    val saveDir: SystemPath
 
     /**
      * 测试是否可以连接到这个引擎. 不能连接一定代表无法使用, 但能连接不一定代表能使用.

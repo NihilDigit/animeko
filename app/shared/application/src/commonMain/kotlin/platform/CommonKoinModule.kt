@@ -17,7 +17,10 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -81,7 +84,13 @@ import me.him188.ani.app.data.repository.subject.SubjectSearchRepository
 import me.him188.ani.app.data.repository.torrent.peer.PeerFilterSubscriptionRepository
 import me.him188.ani.app.data.repository.user.AccessTokenSession
 import me.him188.ani.app.data.repository.user.PreferencesRepositoryImpl
+import me.him188.ani.app.data.models.preference.PikPakConfig
 import me.him188.ani.app.data.repository.user.SettingsRepository
+import me.him188.ani.app.domain.torrent.TorrentEngineType
+import me.him188.ani.app.domain.torrent.engines.PikPakEngine
+import me.him188.ani.torrent.pikpak.PikPakCredentials
+import me.him188.ani.torrent.pikpak.PikPakSessionStoreAdapter
+import me.him188.ani.utils.io.inSystem
 import me.him188.ani.app.data.repository.user.TokenRepository
 import me.him188.ani.app.domain.danmaku.DanmakuRepository
 import me.him188.ani.app.domain.foundation.ConvertSendCountExceedExceptionFeature
@@ -118,8 +127,10 @@ import me.him188.ani.app.domain.mediasource.web.captcha.WebSourceCookieJar
 import me.him188.ani.app.domain.mediasource.web.captcha.WebSourceIdentityRegistry
 import me.him188.ani.app.domain.media.cache.MediaCacheManager
 import me.him188.ani.app.domain.media.cache.MediaCacheManagerImpl
+import me.him188.ani.app.domain.media.cache.PikPakWebM3uCacheMigration
 import me.him188.ani.app.domain.media.cache.engine.HttpMediaCacheEngine
 import me.him188.ani.app.domain.media.cache.engine.KtorPersistentHttpDownloader
+import me.him188.ani.app.domain.media.cache.engine.AlwaysUseTorrentEngineAccess
 import me.him188.ani.app.domain.media.cache.engine.MediaCacheEngineKey
 import me.him188.ani.app.domain.media.cache.engine.TorrentMediaCacheEngine
 import me.him188.ani.app.domain.media.cache.storage.HttpMediaCacheStorage
@@ -136,6 +147,7 @@ import me.him188.ani.app.domain.session.SessionStateProvider
 import me.him188.ani.app.domain.settings.ProxyProvider
 import me.him188.ani.app.domain.settings.SettingsBasedProxyProvider
 import me.him188.ani.app.domain.torrent.TorrentManager
+import me.him188.ani.app.domain.torrent.seeding.PikPakReseeder
 import me.him188.ani.app.domain.update.UpdateManager
 import me.him188.ani.app.domain.watchtogether.LocalPlaybackBridge
 import me.him188.ani.app.domain.watchtogether.PlaybackAutomationGate
@@ -478,6 +490,38 @@ private fun KoinApplication.otherModules(getContext: () -> Context, coroutineSco
         )
     }
 
+    // PikPak 引擎在三端都是进程内运行, 因此接线放在公共模块里, 不重复三份.
+    single<PikPakEngine> {
+        val settings = get<SettingsRepository>()
+        // 初值必须是已保存的设置, 不能拿 PikPakConfig.Default 占位: 引擎的 isSupported 是同步快照,
+        // 启动时的迁移与缓存恢复读到占位值会把引擎当成已关闭, 恢复失败的记录不会再重试.
+        val savedConfig = runBlocking { settings.pikpakConfig.flow.first() }
+        val configState = settings.pikpakConfig.flow
+            .stateIn(coroutineScope, SharingStarted.Eagerly, savedConfig)
+        val credentials = configState
+            .map { cfg ->
+                if (cfg.enabled && cfg.username.isNotEmpty() &&
+                    (cfg.password.isNotEmpty() || cfg.refreshToken.isNotEmpty())
+                ) {
+                    PikPakCredentials(cfg.username, cfg.password)
+                } else null
+            }
+            .stateIn(coroutineScope, SharingStarted.Eagerly, initialValue = null)
+
+        PikPakEngine(
+            config = configState,
+            credentials = credentials,
+            sessionStore = PikPakSessionStoreAdapter(
+                readRefreshToken = { configState.value.refreshToken },
+                writeRefreshToken = { rt -> settings.pikpakConfig.update { copy(refreshToken = rt) } },
+            ),
+            // SDK 自己写 User-Agent, 再叠一个插件会让请求带两个值, PikPak 据此拒绝 captcha.
+            client = get<HttpClientProvider>().get(ScopedHttpClientUserAgent.NONE),
+            saveDir = Path(get<MediaSaveDirProvider>().saveDir, TorrentEngineType.PikPak.id).inSystem,
+            parentCoroutineContext = coroutineScope.coroutineContext,
+        )
+    }
+
     // Media
     single<MediaCacheManager> {
         val id = MediaCacheManager.LOCAL_FS_MEDIA_SOURCE_ID
@@ -500,6 +544,7 @@ private fun KoinApplication.otherModules(getContext: () -> Context, coroutineSco
                     )
                 }*/
                 for (engine in engines) {
+                    val isPikPak = engine.type == TorrentEngineType.PikPak
                     add(
                         @Suppress("DEPRECATION")
                         TorrentMediaCacheStorage(
@@ -509,14 +554,24 @@ private fun KoinApplication.otherModules(getContext: () -> Context, coroutineSco
                                 mediaSourceId = id,
                                 engineKey = MediaCacheEngineKey(engine.type.id),
                                 torrentEngine = engine,
-                                engineAccess = get(),
+                                // PikPak 进程内运行, 安卓上不能让它唤起 AniTorrentService.
+                                engineAccess = if (isPikPak) AlwaysUseTorrentEngineAccess else get(),
                                 dao = database.torrentCacheInfoDao(),
                                 baseSaveDirProvider = get(),
+                                // BT 播放本来就边播边下, 顺带把这一份留给别人; PikPak 能按需取
+                                // 任意字节, 自动记录下满只有做种一个理由, 那正是 Reseeding 开关.
+                                fullDownloadForAutoCaches = if (isPikPak) {
+                                    settingsRepository.pikpakConfig.flow.map { it.reseedingEnabled }
+                                } else flowOf(true),
                             ),
+                            // 缓存的 media 在选择器里显示原数据源的名称, 这个名字只剩下调试用途,
+                            // 三个 storage 又共用同一个 mediaSourceId, 按 id 查到哪一个本就不确定.
                             displayName = "LocalTorrent",
                             parentCoroutineContext = coroutineScope.childScopeContext(),
-                            shareRatioLimitFlow = settingsRepository.anitorrentConfig.flow
-                                .map { it.shareRatioLimit },
+                            // 分享率对云端离线没有意义.
+                            shareRatioLimitFlow = if (isPikPak) flowOf(0f)
+                            else settingsRepository.anitorrentConfig.flow.map { it.shareRatioLimit },
+                            enableSiblingEpisodeHits = isPikPak,
                         ),
                     )
                 }
@@ -589,9 +644,37 @@ fun KoinApplication.startCommonKoinModule(
 
     coroutineScope.launch {
         koin.get<HttpDownloader>().init() // restore http download states first
+        // 迁移要在恢复之前跑完: 恢复按 MediaCacheSave.engine 分派到各个 storage,
+        // 迁移改的正是这个字段.
+        PikPakWebM3uCacheMigration(
+            metadataStore = context.dataStores.mediaCacheMetadataStore,
+            httpDao = koin.get<AniDatabase>().httpCacheDownloadStateDao(),
+            torrentDao = koin.get<AniDatabase>().torrentCacheInfoDao(),
+            baseSaveDirProvider = koin.get(),
+            pikpakSaveDir = koin.get<PikPakEngine>().saveDir,
+        ).migrate()
         val manager = koin.get<MediaCacheManager>()
         for (storage in manager.storagesIncludingDisabled) {
             storage.restorePersistedCaches()
+        }
+
+        // 做种协调器订阅 PikPak storage 的记录列表, 恢复前列表为空, 空集合对它意味着「什么都不做种」,
+        // 所以放在恢复请求之后启动. 开关关闭时它不会触碰 anitorrent.
+        launch {
+            val pikpakStorage = manager.storagesIncludingDisabled.firstOrNull {
+                it.engine.engineKey == MediaCacheEngineKey.PikPak
+            } ?: return@launch
+            val anitorrent = koin.get<TorrentManager>().engines.firstOrNull {
+                it.type != TorrentEngineType.PikPak
+            } ?: return@launch
+            PikPakReseeder(
+                pikpakCaches = pikpakStorage.listFlow,
+                cacheInfo = koin.get<AniDatabase>().torrentCacheInfoDao(),
+                anitorrentEngine = anitorrent,
+                anitorrentAccess = koin.get(),
+                reseedingEnabled = koin.get<SettingsRepository>().pikpakConfig.flow.map { it.reseedingEnabled },
+                baseSaveDirProvider = koin.get(),
+            ).run()
         }
     }
 

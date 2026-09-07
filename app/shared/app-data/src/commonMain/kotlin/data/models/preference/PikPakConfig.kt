@@ -28,8 +28,8 @@ import me.him188.ani.utils.io.tryReveal
  * well-known working folder on the user's PikPak drive, keyed by source
  * bucket, so replays of the same magnet are served straight from the cache.
  * Old buckets are evicted to honor [slotQueueLength] — they are *not* deleted
- * immediately after each resolve. See `PikPakOfflineDownloadEngine` for the
- * full eviction policy.
+ * immediately after each playback. See `PikPakDriveIndex` for the full
+ * eviction policy.
  *
  * [refreshToken] is written by the engine after a successful signin/refresh
  * (not user-editable). It lets the next app launch skip the rate-limited
@@ -60,13 +60,31 @@ data class PikPakConfig(
      * [SLOT_QUEUE_UNLIMITED]) that disables eviction entirely.
      */
     val slotQueueLength: Int = 1,
-    /** Number of parallel HTTP range requests used by explicit PikPak caches. */
-    val downloadConcurrency: Int = DEFAULT_DOWNLOAD_CONCURRENCY,
+    /**
+     * Playback/cache quality. [VARIANT_ORIGINAL] streams the file the torrent
+     * actually contains; the other values are PikPak's server-side transcodes,
+     * which carry no embedded subtitles and 49 kbps audio.
+     *
+     * The variant is part of the on-disk identity of a download (the piece
+     * bitmap belongs to one variant's byte stream), so switching means
+     * re-downloading. See `docs/pikpak-ani-design.md` section 4.5.
+     */
+    val variant: String = VARIANT_ORIGINAL,
+    /**
+     * Whether a played episode is downloaded in full so it can be seeded back.
+     *
+     * PikPak serves any byte on demand, so playback needs no local copy; the
+     * only reason to hold a whole file is to seed it. Off by default: playing
+     * an episode streams and warms up, and nothing lands in the cache list.
+     * Explicit caching from the UI is unaffected either way.
+     */
+    val reseedingEnabled: Boolean = false,
 ) {
     override fun toString(): String {
         return "PikPakConfig(enabled=$enabled, username=$username, password.hash=${password.hashCode()}, " +
                 "refreshToken.hash=${refreshToken.let { if (it.isNotEmpty()) it.hashCode() else "" }}, " +
-                "slotQueueLength=$slotQueueLength, downloadConcurrency=$downloadConcurrency)"
+                "slotQueueLength=$slotQueueLength, variant=$variant, " +
+                "reseedingEnabled=$reseedingEnabled)"
     }
 
     companion object {
@@ -81,9 +99,10 @@ data class PikPakConfig(
          */
         const val SLOT_QUEUE_UNLIMITED: Int = SLOT_QUEUE_MAX_NUMERIC + 1
 
-        const val MIN_DOWNLOAD_CONCURRENCY: Int = 1
-        const val MAX_DOWNLOAD_CONCURRENCY: Int = 8
-        const val DEFAULT_DOWNLOAD_CONCURRENCY: Int = 4
+        const val VARIANT_ORIGINAL: String = "original"
+
+        /** In UI order: 原画 first, then descending transcode quality. */
+        val VARIANTS: List<String> = listOf(VARIANT_ORIGINAL, "1080P", "720P", "480P")
     }
 }
 

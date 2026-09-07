@@ -60,8 +60,11 @@
     <string name="settings_pikpak_queue_title">Cache slots</string>
     <string name="settings_pikpak_queue_description">How many recent sources to keep in PikPak\'s working folder before evicting the oldest. Higher makes re-plays instant at the cost of drive space. Drag past 13 for no eviction at all.</string>
     <string name="settings_pikpak_queue_unlimited">Unlimited</string>
-    <string name="settings_pikpak_download_concurrency_title">Download concurrency</string>
-    <string name="settings_pikpak_download_concurrency_description">Number of parallel connections used when caching files from PikPak. Higher values may improve download speed but increase the chance of temporary server errors.</string>
+    <string name="settings_pikpak_variant_title">Playback quality</string>
+    <string name="settings_pikpak_variant_description">Transcoded qualities carry no embedded subtitles and low-bitrate audio. The quality is part of what has been downloaded, so switching means downloading again.</string>
+    <string name="settings_pikpak_variant_original">Original</string>
+    <string name="settings_pikpak_reseeding_title">Seed cached files</string>
+    <string name="settings_pikpak_reseeding_description">Original-quality files that have been played or cached are downloaded in full and shared over BitTorrent. When off, playback reads only the bytes it needs; explicit caches are still downloaded in full but never shared.</string>
     <string name="settings_pikpak_test_connection">Test connection</string>
     <string name="settings_pikpak_recommend_title">Align media selector?</string>
     <string name="settings_pikpak_recommend_message">PikPak only handles BitTorrent sources. Set "Preferred source type" to BT so the default selector routes through PikPak.</string>
@@ -1275,6 +1278,9 @@
     <string name="subject_episode_statistics_error_details">Error details</string>
     <string name="subject_episode_statistics_error">Error</string>
     <string name="subject_episode_statistics_no_matching_file">No matching file</string>
+    <string name="subject_episode_no_matching_file_dialog_title">Episode not found in this resource</string>
+    <string name="subject_episode_no_matching_file_dialog_description">Choose a file to play</string>
+    <string name="subject_episode_no_matching_file_dialog_cancel">Cancel</string>
     <string name="subject_episode_statistics_resolution_timed_out">Resolution timed out</string>
     <string name="subject_episode_statistics_unsupported_media">Unsupported video type</string>
     <string name="subject_episode_statistics_unknown_error_tap">Unknown error, tap to view</string>

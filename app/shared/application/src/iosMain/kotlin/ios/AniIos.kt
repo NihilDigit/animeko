@@ -25,19 +25,15 @@ import androidx.compose.ui.window.ComposeUIViewController
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.io.files.SystemFileSystem
-import me.him188.ani.app.data.models.preference.PikPakConfig
 import me.him188.ani.app.data.persistent.database.AniDatabase
 import me.him188.ani.app.data.repository.user.SettingsRepository
 import me.him188.ani.app.data.repository.user.UserRepository
 import me.him188.ani.app.domain.foundation.HttpClientProvider
-import me.him188.ani.app.domain.foundation.ScopedHttpClientUserAgent
 import me.him188.ani.app.domain.foundation.get
 import me.him188.ani.app.domain.media.cache.MediaCacheManager
 import me.him188.ani.app.domain.media.cache.engine.AlwaysUseTorrentEngineAccess
@@ -51,13 +47,14 @@ import me.him188.ani.app.domain.media.resolver.HttpStreamingMediaResolver
 import me.him188.ani.app.domain.media.resolver.IosWebMediaResolver
 import me.him188.ani.app.domain.media.resolver.LocalFileUriMediaResolver
 import me.him188.ani.app.domain.media.resolver.MediaResolver
-import me.him188.ani.app.domain.media.resolver.OfflineDownloadMediaResolver
 import me.him188.ani.app.domain.media.resolver.TorrentMediaResolver
 import me.him188.ani.app.domain.mediasource.web.captcha.CaptchaBrowserFactory
 import me.him188.ani.app.domain.mediasource.web.captcha.ImageCaptchaRecognizer
 import me.him188.ani.app.domain.mediasource.web.captcha.UnsupportedCaptchaBrowserFactory
 import me.him188.ani.app.domain.torrent.DefaultTorrentManager
+import me.him188.ani.app.domain.torrent.TorrentEngineType
 import me.him188.ani.app.domain.torrent.TorrentManager
+import me.him188.ani.app.domain.torrent.engines.PikPakEngine
 import me.him188.ani.app.navigation.AniNavigator
 import me.him188.ani.app.navigation.BrowserNavigator
 import me.him188.ani.app.navigation.IosBrowserNavigator
@@ -88,10 +85,6 @@ import me.him188.ani.app.ui.foundation.widgets.ToastViewModel
 import me.him188.ani.app.ui.foundation.widgets.Toaster
 import me.him188.ani.app.ui.main.AniApp
 import me.him188.ani.app.ui.main.AniAppContent
-import me.him188.ani.torrent.offline.OfflineDownloadEngine
-import me.him188.ani.torrent.pikpak.PikPakCredentials
-import me.him188.ani.torrent.pikpak.PikPakOfflineDownloadEngine
-import me.him188.ani.torrent.pikpak.PikPakSessionStoreAdapter
 import me.him188.ani.utils.analytics.Analytics
 import me.him188.ani.utils.httpdownloader.HttpDownloader
 import me.him188.ani.utils.io.SystemCacheDir
@@ -294,6 +287,7 @@ fun getIosModules(
             subscriptionRepository = get(),
             meteredNetworkDetector = get(),
             baseSaveDir = { defaultTorrentCacheDir },
+            pikpak = get<PikPakEngine>(),
         )
     }
     single<HttpMediaCacheEngine> {
@@ -322,49 +316,24 @@ fun getIosModules(
     }
 
 
-    single<OfflineDownloadEngine> {
-        val settings = get<SettingsRepository>()
-        val configState = settings.pikpakConfig.flow
-            .stateIn(coroutineScope, SharingStarted.Eagerly, initialValue = PikPakConfig.Default)
-        val credentialsFlow = configState
-            .map { cfg ->
-                if (cfg.enabled && cfg.username.isNotEmpty() &&
-                    (cfg.password.isNotEmpty() || cfg.refreshToken.isNotEmpty())
-                ) {
-                    PikPakCredentials(cfg.username, cfg.password)
-                } else null
-            }
-            .stateIn(coroutineScope, SharingStarted.Eagerly, initialValue = null)
-        val sessionStore = PikPakSessionStoreAdapter(
-            readRefreshToken = { configState.value.refreshToken },
-            writeRefreshToken = { rt ->
-                settings.pikpakConfig.update { copy(refreshToken = rt) }
-            },
-            // PikPakConfig.password stays on disk obscured (AES-CTR with a
-            // hardcoded key, the same approach as `rclone obscure`; see
-            // ObscuredStringSerializer). We need to keep it because a
-            // server-side revoke of the refresh token would otherwise leave
-            // the engine with no recovery path — Test and playback would
-            // silently fail until the user re-typed the password.
-            // PikPakAcceleratorGroup never echoes the stored value back to
-            // the password field, so the obscured copy is what the eyedrop
-            // attacker would see.
-            onSessionSaved = {},
-        )
-        PikPakOfflineDownloadEngine(
-            scopedHttpClient = get<HttpClientProvider>().get(ScopedHttpClientUserAgent.ANI),
-            credentials = credentialsFlow,
-            scope = coroutineScope,
-            sessionStore = sessionStore,
-            slotQueueLength = { configState.value.slotQueueLength },
-        )
-    }
     factory<MediaResolver> {
-        val torrentResolvers = get<TorrentManager>().engines.map { TorrentMediaResolver(it, get()) }
-        val btFallback = MediaResolver.from(torrentResolvers)
+        val engines = get<TorrentManager>().engines
+        val localTorrentResolvers = engines.filter { it.type != TorrentEngineType.PikPak }
+            .map { TorrentMediaResolver(it, get()) }
+        // PikPak 进程内运行, engineAccess 用 AlwaysUseTorrentEngineAccess.
+        // PikPak 失败时交给本地 BT: 登录、配额、离线任务、列目录的错误都在解析或打开时退化, 用户仍能播
+        // 这一集. 不退化的只有「资源里没有这一集」, 那是文件清单已经拿到之后的结论, 换引擎得到的是同一份
+        // 清单, 退化只会顶掉用户挑文件的对话框.
+        val pikpakResolvers = engines.filter { it.type == TorrentEngineType.PikPak }
+            .map {
+                TorrentMediaResolver(
+                    it, AlwaysUseTorrentEngineAccess,
+                    fallback = localTorrentResolvers.firstOrNull(),
+                )
+            }
         MediaResolver.from(
-            listOf<MediaResolver>(OfflineDownloadMediaResolver(get(), fallback = btFallback))
-                .plus(torrentResolvers)
+            pikpakResolvers
+                .plus<MediaResolver>(localTorrentResolvers)
                 .plus(LocalFileUriMediaResolver())
                 .plus(HttpStreamingMediaResolver())
                 .plus(

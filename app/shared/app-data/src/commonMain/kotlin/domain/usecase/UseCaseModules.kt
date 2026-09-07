@@ -59,6 +59,8 @@ import me.him188.ani.app.domain.settings.GetMediaSelectorSettingsFlowUseCase
 import me.him188.ani.app.domain.settings.GetMediaSelectorSettingsFlowUseCaseImpl
 import me.him188.ani.app.domain.settings.GetMediaSelectorSettingsUseCase
 import me.him188.ani.app.domain.settings.GetMediaSelectorSettingsUseCaseImpl
+import me.him188.ani.app.domain.settings.GetPikPakConfigFlowUseCase
+import me.him188.ani.app.domain.settings.GetPikPakConfigFlowUseCaseImpl
 import me.him188.ani.app.domain.settings.GetVideoScaffoldConfigUseCase
 import me.him188.ani.app.domain.settings.GetVideoScaffoldConfigUseCaseImpl
 import org.koin.core.KoinApplication
@@ -73,6 +75,7 @@ fun KoinApplication.useCaseModules() = module {
     single<GetSubjectEpisodeInfoBundleFlowUseCase> { GetSubjectEpisodeInfoBundleFlowUseCaseImpl() }
     single<CreateMediaFetchSelectBundleFlowUseCase> { CreateMediaFetchSelectBundleFlowUseCaseImpl() }
     single<GetMediaSelectorSettingsFlowUseCase> { GetMediaSelectorSettingsFlowUseCaseImpl }
+    single<GetPikPakConfigFlowUseCase> { GetPikPakConfigFlowUseCaseImpl }
     single<GetVideoScaffoldConfigUseCase> { GetVideoScaffoldConfigUseCaseImpl }
     single<SetDanmakuEnabledUseCase> { SetDanmakuEnabledUseCaseImpl(koin) }
     single<SetSubjectCollectionTypeOrDeleteUseCase> { SetSubjectCollectionTypeOrDeleteUseCaseImpl(get(), get(), get()) }

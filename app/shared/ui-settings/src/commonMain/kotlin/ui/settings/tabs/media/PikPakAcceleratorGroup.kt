@@ -26,8 +26,6 @@ import me.him188.ani.app.data.models.preference.PikPakConfig
 import me.him188.ani.app.ui.foundation.animation.AniAnimatedVisibility
 import me.him188.ani.app.ui.lang.Lang
 import me.him188.ani.app.ui.lang.settings_pikpak_description
-import me.him188.ani.app.ui.lang.settings_pikpak_download_concurrency_description
-import me.him188.ani.app.ui.lang.settings_pikpak_download_concurrency_title
 import me.him188.ani.app.ui.lang.settings_pikpak_enabled
 import me.him188.ani.app.ui.lang.settings_pikpak_password
 import me.him188.ani.app.ui.lang.settings_pikpak_password_description
@@ -39,12 +37,18 @@ import me.him188.ani.app.ui.lang.settings_pikpak_recommend_apply
 import me.him188.ani.app.ui.lang.settings_pikpak_recommend_dismiss
 import me.him188.ani.app.ui.lang.settings_pikpak_recommend_message
 import me.him188.ani.app.ui.lang.settings_pikpak_recommend_title
+import me.him188.ani.app.ui.lang.settings_pikpak_reseeding_description
+import me.him188.ani.app.ui.lang.settings_pikpak_reseeding_title
 import me.him188.ani.app.ui.lang.settings_pikpak_test_connection
 import me.him188.ani.app.ui.lang.settings_pikpak_username
 import me.him188.ani.app.ui.lang.settings_pikpak_username_placeholder
+import me.him188.ani.app.ui.lang.settings_pikpak_variant_description
+import me.him188.ani.app.ui.lang.settings_pikpak_variant_original
+import me.him188.ani.app.ui.lang.settings_pikpak_variant_title
 import me.him188.ani.app.ui.settings.framework.ConnectionTester
 import me.him188.ani.app.ui.settings.framework.ConnectionTesterResultIndicator
 import me.him188.ani.app.ui.settings.framework.SettingsState
+import me.him188.ani.app.ui.settings.framework.components.DropdownItem
 import me.him188.ani.app.ui.settings.framework.components.SettingsScope
 import me.him188.ani.app.ui.settings.framework.components.SliderItem
 import me.him188.ani.app.ui.settings.framework.components.SwitchItem
@@ -166,27 +170,28 @@ internal fun SettingsScope.PikPakAcceleratorGroup(
                     },
                 )
 
-                val downloadConcurrency = config.downloadConcurrency.coerceIn(
-                    PikPakConfig.MIN_DOWNLOAD_CONCURRENCY,
-                    PikPakConfig.MAX_DOWNLOAD_CONCURRENCY,
-                )
-                SliderItem(
-                    value = downloadConcurrency.toFloat(),
-                    onValueChange = { raw ->
-                        val rounded = raw.toInt().coerceIn(
-                            PikPakConfig.MIN_DOWNLOAD_CONCURRENCY,
-                            PikPakConfig.MAX_DOWNLOAD_CONCURRENCY,
+                val variant = config.variant.takeIf { it in PikPakConfig.VARIANTS }
+                    ?: PikPakConfig.VARIANT_ORIGINAL
+                DropdownItem(
+                    selected = { variant },
+                    values = { PikPakConfig.VARIANTS },
+                    itemText = { value ->
+                        Text(
+                            if (value == PikPakConfig.VARIANT_ORIGINAL) {
+                                stringResource(Lang.settings_pikpak_variant_original)
+                            } else value,
                         )
-                        if (rounded != config.downloadConcurrency) {
-                            state.update(config.copy(downloadConcurrency = rounded))
-                        }
                     },
-                    title = { Text(stringResource(Lang.settings_pikpak_download_concurrency_title)) },
-                    description = { Text(stringResource(Lang.settings_pikpak_download_concurrency_description)) },
-                    valueRange = PikPakConfig.MIN_DOWNLOAD_CONCURRENCY.toFloat()..
-                            PikPakConfig.MAX_DOWNLOAD_CONCURRENCY.toFloat(),
-                    steps = PikPakConfig.MAX_DOWNLOAD_CONCURRENCY - PikPakConfig.MIN_DOWNLOAD_CONCURRENCY - 1,
-                    valueLabel = { Text(downloadConcurrency.toString()) },
+                    onSelect = { state.update(config.copy(variant = it)) },
+                    title = { Text(stringResource(Lang.settings_pikpak_variant_title)) },
+                    description = { Text(stringResource(Lang.settings_pikpak_variant_description)) },
+                )
+
+                SwitchItem(
+                    checked = config.reseedingEnabled,
+                    onCheckedChange = { state.update(config.copy(reseedingEnabled = it)) },
+                    title = { Text(stringResource(Lang.settings_pikpak_reseeding_title)) },
+                    description = { Text(stringResource(Lang.settings_pikpak_reseeding_description)) },
                 )
 
                 TextItem(
