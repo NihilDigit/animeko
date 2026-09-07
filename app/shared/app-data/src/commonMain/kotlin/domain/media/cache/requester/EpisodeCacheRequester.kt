@@ -332,12 +332,17 @@ class EpisodeCacheRequesterImpl(
     }
 }
 
-private fun preferredCacheEngineKey(
+/**
+ * 给定一个 media 和当前可用的引擎, 选出应当承担缓存的那个. 播放时自动缓存 (CacheOnBtPlayExtension)
+ * 与用户手动缓存必须选同一个引擎, 否则会出现两份下载.
+ */
+internal fun preferredCacheEngineKey(
     media: Media,
     supported: List<MediaCacheEngineKey>,
 ): MediaCacheEngineKey? {
     if (media.kind != MediaSourceKind.BitTorrent) return null
 
-    // 启用 PikPak 后，自动接管 BT 源缓存并通过 HTTP 下载。
-    return MediaCacheEngineKey.WebM3u.takeIf { it in supported }
+    // PikPak 引擎启用时接管 BT 源: 磁链交给云端离线, 再按 piece 拉回本地.
+    return MediaCacheEngineKey.PikPak.takeIf { it in supported }
+        ?: MediaCacheEngineKey.Anitorrent.takeIf { it in supported }
 }

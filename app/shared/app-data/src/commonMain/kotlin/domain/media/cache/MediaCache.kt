@@ -217,6 +217,12 @@ interface MediaCache {
     suspend fun resume()
 
     /**
+     * 用户在缓存页上按下恢复. 与 [resume] 分开是因为 [resume] 同时是建立和恢复记录时的生命周期调用,
+     * 分不出「跟随播放顺手建的」和「用户要这一条」.
+     */
+    suspend fun resumeByUser() = resume()
+
+    /**
      * 该缓存的文件是否已经被删除. 删除后不可恢复.
      */
     val isDeleted: StateFlow<Boolean>

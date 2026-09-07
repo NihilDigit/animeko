@@ -61,6 +61,24 @@ data class MediaCacheMetadata(
      */
     val autoCached: Boolean = false,
 
+    /**
+     * 这条记录要播放的种子内文件, 即 `TorrentFileEntry.pathInTorrent`.
+     *
+     * 自动匹配不到本集时由用户指定. 记在这里而不是 `torrent_cache` 表里: 那张表按 mediaId 建主键,
+     * 整季包的每一集共用同一行, 存不下每集各自的选择.
+     *
+     * `null` 表示没有指定, 由自动匹配决定. 旧记录反序列化后就是 `null`.
+     */
+    val pathInTorrent: String? = null,
+
+    /**
+     * 这条记录自己的文件是否已经下完并达到分享率.
+     *
+     * 与 `torrent_cache.completed` 不同: 那一行按 mediaId 建主键, 整季包各集共用, 表示的是「这个种子
+     * 里有文件下完了」. 拿它判断某一集会让包里第一个下完的文件冒充所有剧集.
+     */
+    val completed: Boolean = false,
+
     @Transient @Suppress("unused") private val _primaryConstructorMarker: Byte = 0, // avoid compiler error
 ) {
     constructor(

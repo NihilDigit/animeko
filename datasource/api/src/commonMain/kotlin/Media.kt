@@ -207,6 +207,11 @@ class CachedMedia(
 data class MediaCacheProperties(
     val totalSegments: Int? = null,
     val httpDownloaderStatus: String? = null,
+    /**
+     * 种子内的相对路径, 已经确定是这个 media 要播放的文件. 整季包里非首集的命中在查询阶段就选好了文件,
+     * 播放时不必再选一次.
+     */
+    val pathInTorrent: String? = null,
 )
 
 /**
@@ -345,3 +350,12 @@ enum class SubtitleKind {
 fun Media.isLocalCache(): Boolean {
     return kind == MediaSourceKind.LocalCache
 }
+
+/**
+ * 展示给用户的数据源 id. 对于 [CachedMedia] 是被缓存的那个 [Media] 的数据源, 而不是缓存引擎自己的 id.
+ *
+ * 用户关心这份资源出自哪个站点或字幕组; 它已被缓存这件事由 [Media.kind] 与 [Media.location] 的图标表达,
+ * 不需要再占用名称.
+ */
+val Media.originalMediaSourceId: String
+    get() = (this as? CachedMedia)?.origin?.mediaSourceId ?: mediaSourceId

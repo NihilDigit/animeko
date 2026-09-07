@@ -43,7 +43,19 @@ class TorrentMediaCacheStorage(
     private val shareRatioLimitFlow: Flow<Float>,
     private val displayName: String,
     parentCoroutineContext: CoroutineContext = EmptyCoroutineContext,
-) : AbstractDataStoreMediaCacheStorage(mediaSourceId, store, torrentEngine, displayName, parentCoroutineContext) {
+    /**
+     * 只有云端引擎该开: anitorrent 上一次派生命中会让 P2P 开始下载整季包里的另一个文件,
+     * 这会改变现有用户的行为. PikPak 的会话本来就在云端, 打开另一集只多一次 getFile.
+     */
+    enableSiblingEpisodeHits: Boolean = false,
+) : AbstractDataStoreMediaCacheStorage(
+    mediaSourceId, store, torrentEngine, displayName, parentCoroutineContext,
+    packFilesProvider = if (enableSiblingEpisodeHits) {
+        { cache -> torrentEngine.getFilesInTorrent(cache.origin.mediaId) }
+    } else {
+        null
+    },
+) {
     private val statSubscriptionScope = RestartableCoroutineScope(scope.coroutineContext)
 
     /**
@@ -56,9 +68,16 @@ class TorrentMediaCacheStorage(
      */
     private val requestStartupRestore = Channel<Unit>(Channel.CONFLATED)
 
+    private val startupRestored = CompletableDeferred<Unit>()
+
     init {
+        // 删一条记录时引擎要知道同一个种子还剩几条: 整季包各集共用一个目录和一行 torrent_cache.
+        // 删除发生时记录已经从 listFlow 里摘掉了, 所以这里读到的正是剩下的.
+        torrentEngine.remainingRecordsOfMedia = { mediaId ->
+            listFlow.value.filter { it.origin.mediaId == mediaId }.map { it.metadata }
+        }
+
         scope.launch(start = CoroutineStart.UNDISPATCHED) {
-            val startupRestored = CompletableDeferred<Unit>()
             val serviceConnected = torrentEngine.isServiceConnected.buffer(Channel.RENDEZVOUS).produceIn(this)
 
             while (true) {
@@ -106,8 +125,12 @@ class TorrentMediaCacheStorage(
             when (cache) {
                 is TorrentMediaCacheEngine.TorrentMediaCache -> {
                     logger.info { "Cache resumed: $cache, subscribe to media cache stats." }
+                    cache.onMetadataUpdated = { persistMetadata(cache, it) }
                     statSubscriptionScope.launch {
                         cache.subscribeStats(shareRatioLimitFlow)
+                    }
+                    statSubscriptionScope.launch {
+                        cache.applyDownloadPolicy()
                     }
                 }
 
@@ -133,8 +156,12 @@ class TorrentMediaCacheStorage(
             val cache = super.cache(media, metadata, episodeMetadata, false)
             check(cache is TorrentMediaCacheEngine.TorrentMediaCache) { "Cache does not implement TorrentMediaCache." }
 
+            cache.onMetadataUpdated = { persistMetadata(cache, it) }
             statSubscriptionScope.launch {
                 cache.subscribeStats(shareRatioLimitFlow)
+            }
+            statSubscriptionScope.launch {
+                cache.applyDownloadPolicy()
             }
 
             cache

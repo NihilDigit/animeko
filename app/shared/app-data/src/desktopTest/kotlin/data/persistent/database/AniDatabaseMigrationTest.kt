@@ -124,6 +124,38 @@ class AniDatabaseMigrationTest {
         }
     }
 
+    /**
+     * 23→24 把 torrent_cache 的主键改成 (mediaId, engine), Room 用建新表复制的方式实现.
+     * 新列的 SQL 默认值是 'anitorrent', 所以复制过来的行全是 anitorrent, PikPak 建的行要靠
+     * onPostMigrate 按保存目录改回来.
+     */
+    @Test
+    fun `MIG-06 v23到v24按保存目录把pikpak的行标成pikpak`() {
+        val helper = createHelper()
+        helper.createDatabase(23).use { connection ->
+            connection.execSQL(
+                """
+                INSERT INTO `torrent_cache`
+                    (`mediaId`, `torrentData`, `relativeDir`, `completed`, `pathInTorrent`, `downloadSize`, `uploadSize`)
+                VALUES
+                    ('m1', x'01', '/anitorrent/1234', 0, '', 0, 0),
+                    ('m2', x'02', '/pikpak/abcd', 0, '', 0, 0),
+                    ('m3', x'03', '\pikpak\efgh', 0, '', 0, 0)
+                """.trimIndent(),
+            )
+        }
+        helper.runMigrationsAndValidate(24, emptyList()).use { connection ->
+            val engines = connection
+                .prepare("SELECT `mediaId`, `engine` FROM `torrent_cache` ORDER BY `mediaId`")
+                .use { statement ->
+                    buildMap {
+                        while (statement.step()) put(statement.getText(0), statement.getText(1))
+                    }
+                }
+            assertEquals(mapOf("m1" to "anitorrent", "m2" to "pikpak", "m3" to "pikpak"), engines)
+        }
+    }
+
     @Test
     fun `MIG-04 缺失手动19-20迁移时从v16迁移到v21失败`() {
         val helper = createHelper()

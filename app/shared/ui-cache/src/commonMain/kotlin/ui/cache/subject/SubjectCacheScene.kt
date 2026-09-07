@@ -282,7 +282,7 @@ class SubjectCacheViewModelImpl(
 
     override fun resumeCache(cache: CacheEpisodeState) {
         launchInBackground {
-            cacheManager.findFirstCache { it.cacheId == cache.cacheId }?.resume()
+            cacheManager.findFirstCache { it.cacheId == cache.cacheId }?.resumeByUser()
         }
     }
 
@@ -307,7 +307,7 @@ class SubjectCacheViewModelImpl(
         launchInBackground {
             cacheManager.listCacheForSubject(subjectId).first().forEach { cache ->
                 if (cache.state.first() == MediaCacheState.PAUSED) {
-                    cache.resume()
+                    cache.resumeByUser()
                 }
             }
         }

@@ -117,6 +117,8 @@ private class TestStorage(
         resume: Boolean,
     ): MediaCache = error("unused")
 
+    override suspend fun updateMetadata(cache: MediaCache, metadata: MediaCacheMetadata): MediaCache? = null
+
     override suspend fun delete(cache: MediaCache): Boolean = false
 
     override suspend fun deleteFirst(predicate: (MediaCache) -> Boolean): Boolean = false

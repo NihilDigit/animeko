@@ -26,12 +26,17 @@ import me.him188.ani.app.domain.media.cache.engine.MediaCacheEngineKey
 import me.him188.ani.app.domain.media.cache.engine.MediaStats
 import me.him188.ani.app.domain.media.fetch.MediaFetcher
 import me.him188.ani.app.domain.media.resolver.EpisodeMetadata
+import me.him188.ani.app.domain.media.resolver.TorrentFileLabel
+import me.him188.ani.app.domain.media.resolver.TorrentMediaResolver
 import me.him188.ani.datasources.api.CachedMedia
+import me.him188.ani.datasources.api.EpisodeSort
 import me.him188.ani.datasources.api.Media
 import me.him188.ani.datasources.api.MediaCacheMetadata
+import me.him188.ani.datasources.api.MediaCacheProperties
 import me.him188.ani.datasources.api.paging.SinglePagePagedSource
 import me.him188.ani.datasources.api.paging.SizedSource
 import me.him188.ani.datasources.api.source.ConnectionStatus
+import me.him188.ani.datasources.api.source.MatchKind
 import me.him188.ani.datasources.api.source.MediaFetchRequest
 import me.him188.ani.datasources.api.source.MediaMatch
 import me.him188.ani.datasources.api.source.MediaSource
@@ -41,7 +46,9 @@ import me.him188.ani.datasources.api.source.MediaSourceLocation
 import me.him188.ani.datasources.api.source.matches
 import me.him188.ani.datasources.api.topic.FileSize
 import me.him188.ani.datasources.api.topic.FileSize.Companion.bytes
+import me.him188.ani.datasources.api.topic.contains
 import me.him188.ani.datasources.api.topic.flowOfFileSizeZero
+import me.him188.ani.datasources.api.topic.isSingleEpisode
 
 /**
  * 表示一个媒体缓存的存储空间, 例如一个本地目录.
@@ -103,6 +110,11 @@ interface MediaCacheStorage : AutoCloseable {
         episodeMetadata: EpisodeMetadata,
         resume: Boolean = true,
     ): MediaCache
+
+    /**
+     * 改写一条已有记录的 metadata, 返回按新 metadata 重新打开的记录. 没有这条记录时返回 `null`.
+     */
+    suspend fun updateMetadata(cache: MediaCache, metadata: MediaCacheMetadata): MediaCache?
 
     /**
      * Delete the cache if it exists.
@@ -173,6 +185,12 @@ class MediaCacheStorageSource(
     private val storage: MediaCacheStorage,
     private val displayName: String,
     override val location: MediaSourceLocation = MediaSourceLocation.Local,
+    /**
+     * 给出一个种子里的所有文件路径, 用来判断整季包里有没有某一集的文件. 见 [siblingEpisodesInPack].
+     *
+     * 为 `null` 时不产生派生命中. anitorrent 走这条路: 派生命中会让 P2P 下载一个用户没要的文件.
+     */
+    private val packFilesProvider: (suspend (MediaCache) -> List<String>)? = null,
 ) : MediaSource {
     override val mediaSourceId: String get() = storage.mediaSourceId
     override val kind: MediaSourceKind get() = MediaSourceKind.LocalCache
@@ -181,12 +199,78 @@ class MediaCacheStorageSource(
 
     override suspend fun fetch(query: MediaFetchRequest): SizedSource<MediaMatch> {
         return SinglePagePagedSource {
-            storage.listFlow.first().mapNotNull { cache ->
+            val caches = storage.listFlow.first()
+            val matched = caches.mapNotNull { cache ->
                 val kind = query.matches(cache.metadata)
                 if (kind == null) null
                 else MediaMatch(cache.getCachedMedia(), kind)
-            }.asFlow()
+            }
+            // 本集已有缓存记录时不再派生, 否则同一个 mediaId 会出现两次.
+            val provider = packFilesProvider
+            val result = if (provider != null && matched.isEmpty()) {
+                siblingEpisodesInPack(caches, query, provider)
+            } else {
+                matched
+            }
+            result.asFlow()
         }
+    }
+
+    /**
+     * 整季包已经为其中一集建立了缓存, 本地就有这个种子的会话与文件清单; 包内其他剧集同样能从这份
+     * 会话打开, 不必再走网络数据源. 派生出的 [CachedMedia] 不是缓存记录, 也不启动下载:
+     * 真正的记录由 `CacheOnBtPlayExtension` 在该集被播放时创建.
+     *
+     * 下载地址取原 media 的磁链而非已完成文件的路径, 播放因此走 `TorrentMediaResolver`.
+     * 命中的文件在这里就选定并写进 [MediaCacheProperties.pathInTorrent], 播放时不再选一次.
+     *
+     * 判断依据是种子里真的有这一集的文件, 而不是 [Media.episodeRange] 覆盖了这个集数:
+     * 「01-12+SP」这种包解析出的范围是 01..12, 而 SP01 的 number 也是 1, 只看范围会让每个 SP
+     * 都命中, 再由播放时的兜底选中正片第一集.
+     */
+    private suspend fun siblingEpisodesInPack(
+        caches: List<MediaCache>,
+        query: MediaFetchRequest,
+        packFiles: suspend (MediaCache) -> List<String>,
+    ): List<MediaMatch> {
+        // SP 的判断依据换成「包里有特别篇文件」而不是集数范围: 「01-24+SPx6」解析出的范围是 01..24,
+        // 按范围 SP 永远不命中, 用户选过的包就白选了. 文件可以选不出来: 碟片的 S00E01 与 Bangumi 的
+        // SP01 是两套编号, 匹配只认文件名里写明的标签, 选不出就把 pathInTorrent 留空, 播放时弹
+        // 「资源中未找到本集」让用户挑, 挑的结果落进记录, 下次直接用.
+        val isSpecial = query.episodeSort is EpisodeSort.Special
+
+        return caches.asSequence()
+            .filter { it.metadata.subjectId == query.subjectId }
+            .filter { cache ->
+                val range = cache.origin.episodeRange ?: return@filter false
+                !range.isSingleEpisode() && (isSpecial || range.contains(query.episodeSort))
+            }
+            .distinctBy { it.origin.mediaId }
+            .toList()
+            .mapNotNull { cache ->
+                val files = packFiles(cache)
+                val kind = TorrentFileLabel.kindOf(query.episodeSort)
+                if (isSpecial && files.none { TorrentFileLabel.of(it)?.kind == kind }) return@mapNotNull null
+
+                val path = TorrentMediaResolver.selectVideoFileEntryExact(
+                    files,
+                    { this },
+                    listOf(query.episodeName),
+                    episodeSort = query.episodeSort,
+                    episodeEp = query.episodeEp,
+                )
+                if (path == null && !isSpecial) return@mapNotNull null
+
+                MediaMatch(
+                    CachedMedia(
+                        cache.origin,
+                        storage.mediaSourceId,
+                        download = cache.origin.download,
+                        cacheProperties = MediaCacheProperties(pathInTorrent = path),
+                    ),
+                    MatchKind.FUZZY,
+                )
+            }
     }
 
     override val info: MediaSourceInfo = MediaSourceInfo(
@@ -217,6 +301,10 @@ class TestMediaCacheStorage : MediaCacheStorage {
         episodeMetadata: EpisodeMetadata,
         resume: Boolean
     ): MediaCache {
+        throw UnsupportedOperationException()
+    }
+
+    override suspend fun updateMetadata(cache: MediaCache, metadata: MediaCacheMetadata): MediaCache {
         throw UnsupportedOperationException()
     }
 

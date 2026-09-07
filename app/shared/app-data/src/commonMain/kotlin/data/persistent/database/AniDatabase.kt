@@ -85,7 +85,7 @@ import me.him188.ani.utils.httpdownloader.DownloadState
         PlaybackHistoryRecordEntity::class,
         PlaybackHistoryPendingOpEntity::class,
     ],
-    version = 22,
+    version = 24,
     autoMigrations = [
         AutoMigration(from = 1, to = 2, spec = Migrations.Migration_1_2::class),
         AutoMigration(from = 2, to = 3, spec = Migrations.Migration_2_3::class),
@@ -107,6 +107,8 @@ import me.him188.ani.utils.httpdownloader.DownloadState
         AutoMigration(from = 18, to = 19, spec = Migrations.Migration_18_19::class),
         AutoMigration(from = 20, to = 21, spec = Migrations.Migration_20_21::class),
         AutoMigration(from = 21, to = 22, spec = Migrations.Migration_21_22::class),
+        AutoMigration(from = 22, to = 23, spec = Migrations.Migration_22_23::class),
+        AutoMigration(from = 23, to = 24, spec = Migrations.Migration_23_24::class),
     ],
     exportSchema = true,
 )
@@ -394,6 +396,34 @@ internal object Migrations {
     @DeleteTable("web_search_subject")
     class Migration_21_22 : AutoMigrationSpec {
         override fun onPostMigrate(connection: SQLiteConnection) {
+        }
+    }
+
+    // torrent_cache 增加 filesInTorrent, 可空: 已有记录留 null, 表示清单未知.
+    class Migration_22_23 : AutoMigrationSpec {
+        override fun onPostMigrate(connection: SQLiteConnection) {
+        }
+    }
+
+    /**
+     * torrent_cache 主键从 mediaId 改为 (mediaId, engine). 新列默认 'anitorrent', 迁移后把
+     * PikPak 建的行改过来.
+     *
+     * 判据只能是 relativeDir: 旧表没有任何别的字段能区分引擎. 它是
+     * `TorrentDownloader.getSaveDirForTorrent` 的绝对路径去掉 `MediaSaveDirProvider.saveDir`
+     * 前缀的余部, 两个引擎的保存目录分别是
+     * `<saveDir>/anitorrent/<种子 hash>` 与 `<saveDir>/pikpak/<sourceKey>`, 所以余部的第一段
+     * 就是引擎 id, 且其后必有一段目录名. 分隔符两种都匹配: 路径由 kotlinx-io 按平台分隔符拼出,
+     * Windows 上写进库里的是反斜杠, 库文件会随备份跨平台搬运.
+     */
+    class Migration_23_24 : AutoMigrationSpec {
+        override fun onPostMigrate(connection: SQLiteConnection) {
+            connection.execSQL(
+                """
+                UPDATE `torrent_cache` SET `engine` = 'pikpak'
+                WHERE `relativeDir` LIKE '%pikpak/%' OR `relativeDir` LIKE '%pikpak\%'
+                """.trimIndent(),
+            )
         }
     }
 }
