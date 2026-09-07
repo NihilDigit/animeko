@@ -20,5 +20,5 @@ interface IRemoteTorrentSession {
     
     void close();
     
-    void closeIfNotInUse();
+    boolean closeIfNotInUse();
 }

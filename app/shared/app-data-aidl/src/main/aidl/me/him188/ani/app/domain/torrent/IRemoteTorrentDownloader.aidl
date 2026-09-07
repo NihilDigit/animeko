@@ -21,6 +21,8 @@ interface IRemoteTorrentDownloader {
     IDisposableHandle startDownload(in PEncodedTorrentInfo data, in ContTorrentDownloaderStartDownload cont);
     
     String getSaveDirForTorrent(in PEncodedTorrentInfo data);
+
+    void discardResumeData(in PEncodedTorrentInfo data);
     
     String[] listSaves();
     

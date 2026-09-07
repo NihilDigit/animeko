@@ -356,6 +356,24 @@ abstract class AnitorrentTorrentDownloader<THandle : TorrentHandle, TAddInfo : T
     }
 
     /**
+     * 丢弃 [data] 的 fast resume 记录, 使下一次 [startDownload] 重新校验保存目录里已有的文件.
+     *
+     * libtorrent 的 force_recheck 不在 JNI 绑定里. 但没有 resume data 的任务加入时本来就会进入
+     * checking_files 并把盘上已有的数据算进 piece 位图, 两者结果相同. 供在 libtorrent 之外往保存
+     * 目录里放文件的调用方使用 (见 PikPakReseeder): 它硬链接进来的字节, libtorrent 只有校验一次
+     * 才会知道.
+     *
+     * 必须在该任务的会话关闭之后调用, 否则会话关闭时又会把 resume data 写回去.
+     */
+    override fun discardResumeData(data: EncodedTorrentInfo) {
+        val file = getSaveDirForTorrent(data).resolve(FAST_RESUME_FILENAME)
+        if (file.exists()) {
+            file.delete()
+            logger.info { "Discarded fast resume data at ${file.absolutePath}" }
+        }
+    }
+
+    /**
      *  Don't change this.
      *
      *  TODO: move this to [TorrentDownloader].

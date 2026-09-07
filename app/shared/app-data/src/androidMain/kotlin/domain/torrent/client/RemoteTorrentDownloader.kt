@@ -118,6 +118,10 @@ class RemoteTorrentDownloader(
         return Path(remotePath).inSystem
     }
 
+    override fun discardResumeData(data: EncodedTorrentInfo) {
+        remote.call { discardResumeData(data.toParceled()) }
+    }
+
     override fun listSaves(): List<SystemPath> {
         return remote.call { listSaves() }.map { Path(it).inSystem }
     }

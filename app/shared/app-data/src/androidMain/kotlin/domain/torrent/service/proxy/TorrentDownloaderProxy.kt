@@ -133,6 +133,13 @@ class TorrentDownloaderProxy(
         return path.absolutePath
     }
 
+    @RequiresApi(Build.VERSION_CODES.O_MR1)
+    override fun discardResumeData(data: PEncodedTorrentInfo?) {
+        if (data == null) return
+
+        delegate.discardResumeData(data.toEncodedTorrentInfo())
+    }
+
     override fun listSaves(): Array<String> {
         val saves = delegate.listSaves()
 

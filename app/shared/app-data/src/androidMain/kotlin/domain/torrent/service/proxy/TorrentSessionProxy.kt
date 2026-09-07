@@ -108,9 +108,10 @@ class TorrentSessionProxy(
         }
     }
 
-    override fun closeIfNotInUse() {
-        scope.launch {
-            delegate.closeIfNotInUse()
-        }
+    // Unlike close(), the caller needs the answer, so this cannot be fired off on the scope any
+    // more. Blocking the binder thread is what getName() already does, and the wait is bounded:
+    // the underlying close() gives up on the native removal after a few seconds.
+    override fun closeIfNotInUse(): Boolean {
+        return runBlocking { delegate.closeIfNotInUse() }
     }
 }

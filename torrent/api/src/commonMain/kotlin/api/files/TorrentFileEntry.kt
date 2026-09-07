@@ -202,15 +202,9 @@ abstract class AbstractTorrentFileEntry(
 
         override val entry get() = this@AbstractTorrentFileEntry
 
-        override fun equals(other: Any?): Boolean {
-            if (this === other) return true
-            if (other !is AbstractTorrentFileHandle) return false
-            return entry === other.entry
-        }
-
-        override fun hashCode(): Int {
-            return entry.hashCode()
-        }
+        // 句柄按身份比较, 不按所属文件. priorityRequests 以句柄为键, 曾经的 equals 把同一文件的
+        // 所有句柄视为同一个键, 后来的请求覆盖先前的: 播放句柄要 HIGH, 缓存记录的句柄随后
+        // pause() 写入 null, 文件就停止取流. 每个句柄各占一键, 文件优先级才是各请求的最大值.
 
         final override fun resume(priority: FilePriority) {
             checkClosed()

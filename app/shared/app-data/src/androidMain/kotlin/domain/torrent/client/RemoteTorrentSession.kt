@@ -99,8 +99,8 @@ class RemoteTorrentSession(
         }
     }
 
-    override suspend fun closeIfNotInUse() {
-        withContext(Dispatchers.IO_) {
+    override suspend fun closeIfNotInUse(): Boolean {
+        return withContext(Dispatchers.IO_) {
             remote.call { closeIfNotInUse() }
         }
     }

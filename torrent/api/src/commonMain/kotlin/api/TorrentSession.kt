@@ -83,6 +83,13 @@ interface TorrentSession {
 
     /**
      * 仅当没有文件正在被使用时关闭该下载任务.
+     *
+     * 同一个种子只有一个会话, 拿到它的可能不止一个使用方 (播放、缓存记录、做种). 返回值让调用方
+     * 知道自己有没有真的关掉它: 关不掉就说明别人还开着文件, 调用方应当就此收手, 而不是接着做
+     * 「会话已经不存在」才成立的事.
+     *
+     * @return 调用结束时该任务已关闭为 `true` (包括调用前就已经关闭的情况); 有别的使用方开着文件
+     * 因而没有关闭为 `false`.
      */
-    suspend fun closeIfNotInUse()
+    suspend fun closeIfNotInUse(): Boolean
 }

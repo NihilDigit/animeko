@@ -544,10 +544,10 @@ class AnitorrentDownloadSession(
         closingDeferred.complete(Unit)
     }
 
-    override suspend fun closeIfNotInUse() {
-        if (openFiles.value.isEmpty()) {
-            close()
-        }
+    override suspend fun closeIfNotInUse(): Boolean {
+        if (openFiles.value.isNotEmpty()) return false
+        close()
+        return true
     }
 
     fun deleteEntireTorrentIfNotInUse() {

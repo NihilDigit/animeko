@@ -81,6 +81,23 @@ interface TorrentDownloader : AutoCloseable {
     ): SystemPath
 
     /**
+     * Discards whatever resume data the engine keeps for [data], so that the next
+     * [startDownload] checks the save directory against the torrent again.
+     *
+     * For callers that place files into the save directory from outside the engine:
+     * the engine learns about those bytes only by re-checking the disk, and resume
+     * data recorded before they were placed says there is nothing there.
+     *
+     * Must be called with no session open for [data]; a session writes its resume
+     * data back when it closes.
+     *
+     * The default implementation does nothing, which is correct for an engine that
+     * keeps no resume data (`PikPakTorrentDownloader` restores from its own
+     * `meta.json` and always re-reads the disk).
+     */
+    fun discardResumeData(data: EncodedTorrentInfo) {}
+
+    /**
      * 获取所有的种子保存目录列表
      */
     fun listSaves(): List<SystemPath>
