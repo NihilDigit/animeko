@@ -75,6 +75,7 @@ import me.him188.ani.app.ui.media.rememberMediaDetailsStrings
 import me.him188.ani.app.ui.media.renderProperties
 import me.him188.ani.app.ui.mediafetch.MediaSourceInfoProvider
 import me.him188.ani.datasources.api.Media
+import me.him188.ani.datasources.api.originalMediaSourceId
 import me.him188.ani.datasources.api.source.MediaSourceInfo
 import org.jetbrains.compose.resources.stringResource
 import org.openani.mediamp.MediampPlayer
@@ -92,7 +93,9 @@ class VideoStatisticsCollector(
         combine(
             selectedMediaFlow,
             selectedMediaFlow.flatMapLatest {
-                mediaSourceInfoProvider.getSourceInfoFlow(it?.mediaSourceId ?: return@flatMapLatest emptyFlow())
+                mediaSourceInfoProvider.getSourceInfoFlow(
+                    it?.originalMediaSourceId ?: return@flatMapLatest emptyFlow(),
+                )
             },
             selectedMediaFlow
                 .combine(playerState.mediaData.map { it?.filenameOrNull }) { selectedMedia, filename ->

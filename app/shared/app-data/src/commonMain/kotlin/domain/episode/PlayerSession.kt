@@ -20,6 +20,7 @@ import kotlinx.coroutines.withContext
 import me.him188.ani.app.domain.media.hls.HlsPlaybackPreparer
 import me.him188.ani.app.domain.media.hls.HlsPlaybackProxySession
 import me.him188.ani.app.domain.media.fetch.MediaFetchSession
+import me.him188.ani.app.domain.media.player.data.TorrentMediaData
 import me.him188.ani.app.domain.media.resolver.EpisodeMetadata
 import me.him188.ani.app.domain.media.resolver.MediaResolutionException
 import me.him188.ani.app.domain.media.resolver.MediaResolver
@@ -108,7 +109,12 @@ class PlayerSession(
             hlsPlaybackProxySession = preparedHlsPlaybackProxySession
             preparedHlsPlaybackProxySession = null
 
-            _videoLoadingStateFlow.value = VideoLoadingState.Succeed(isBt = source is TorrentBackedMediaDataProvider)
+            _videoLoadingStateFlow.value = VideoLoadingState.Succeed(
+                isBt = source is TorrentBackedMediaDataProvider,
+                // 取自打开的数据而不是 source: source 是链条选中的那个 resolver 的 provider,
+                // 它内部可能已经回退到另一个引擎.
+                engineKey = (data as? TorrentMediaData)?.engineKey,
+            )
         } catch (e: UnsupportedMediaException) {
             logger.warn { IllegalStateException("Failed to resolve video source, unsupported media", e) }
             _videoLoadingStateFlow.value = VideoLoadingState.UnsupportedMedia

@@ -10,6 +10,7 @@
 package me.him188.ani.app.domain.player
 
 import androidx.compose.runtime.Immutable
+import me.him188.ani.app.domain.media.cache.engine.MediaCacheEngineKey
 import me.him188.ani.app.domain.media.resolver.MediaResolver
 import me.him188.ani.app.domain.media.selector.MediaSelector
 import me.him188.ani.datasources.api.Media
@@ -38,9 +39,13 @@ sealed interface VideoLoadingState {
 
     /**
      * 文件成功找到
+     *
+     * @param engineKey 提供这次播放的 BT 引擎. resolver 链首位的引擎失败后可能由后面的引擎接手,
+     * 此时它不等于按设置推断出的首选引擎. 非 BT 播放为 `null`.
      */
     data class Succeed(
         val isBt: Boolean,
+        val engineKey: MediaCacheEngineKey? = null,
     ) : VideoLoadingState, Progressing
 
     sealed class Failed : VideoLoadingState

@@ -11,6 +11,8 @@ package me.him188.ani.app.domain.media.player.data
 
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import me.him188.ani.app.domain.media.cache.engine.MediaCacheEngineKey
+import me.him188.ani.app.torrent.api.TorrentSession
 import me.him188.ani.app.torrent.api.files.TorrentFileHandle
 import me.him188.ani.app.torrent.api.files.averageRate
 import org.openani.mediamp.ExperimentalMediampApi
@@ -23,11 +25,24 @@ import kotlin.coroutines.CoroutineContext
 class TorrentMediaData(
     private val handle: TorrentFileHandle,
     private val onClose: () -> Unit,
+    /**
+     * 真正提供这次播放的引擎. 有回退时它不是 resolver 链上排第一的那个引擎, 而自动缓存记录必须落在
+     * 提供播放的引擎的 storage 上, 否则会在另一个引擎上凭空起一份下载.
+     */
+    val engineKey: MediaCacheEngineKey? = null,
     override val extraFiles: MediaExtraFiles = MediaExtraFiles.EMPTY,
     override val options: List<String> = emptyList(),
+    /**
+     * 正在播放的这个文件所属的会话. 句柄只能到达单个文件, 而整季包的其他剧集在同一个会话里,
+     * 需要它才能拿到完整文件清单.
+     */
+    val session: TorrentSession? = null,
 ) : SeekableInputMediaData, DownloadingMediaData, FileMediaData {
     private inline val entry get() = handle.entry
     override val filename: String get() = entry.fileName
+
+    /** 正在播放的文件在种子内的路径, 与 [TorrentSession.getFiles] 清单里的 pathInTorrent 同一格式. */
+    val pathInTorrent: String get() = entry.pathInTorrent
     override val uri: String get() = "torrent://dummy/${entry.fileName}"
 
     override fun fileLength(): Long = entry.length

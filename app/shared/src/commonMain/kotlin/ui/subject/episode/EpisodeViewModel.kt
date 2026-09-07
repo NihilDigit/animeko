@@ -108,6 +108,7 @@ import me.him188.ani.app.domain.player.extension.RememberPlayProgressExtension
 import me.him188.ani.app.domain.player.extension.SaveMediaPreferenceExtension
 import me.him188.ani.app.domain.player.extension.SwitchMediaOnPlayerErrorExtension
 import me.him188.ani.app.domain.player.extension.SwitchNextEpisodeExtension
+import me.him188.ani.app.domain.player.extension.WarmUpPackEpisodesExtension
 import me.him188.ani.app.domain.player.extension.WatchTogetherPlayerExtension
 import me.him188.ani.app.domain.settings.GetDanmakuRegexFilterListFlowUseCase
 import me.him188.ani.app.domain.settings.GetMediaSelectorSettingsUseCase
@@ -340,6 +341,7 @@ class EpisodeViewModel(
             WatchTogetherPlayerExtension,
             MarkAsWatchedExtension,
             CacheOnBtPlayExtension,
+            WarmUpPackEpisodesExtension,
             SwitchNextEpisodeExtension.Factory(
                 getNextEpisode = { currentEpisodeId ->
                     val list = episodeCollectionsFlow.first()
