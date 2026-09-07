@@ -12,22 +12,35 @@ plugins {
     alias(libs.plugins.kotlin.plugin.serialization)
 }
 
-// Propagate PIKPAK_* vars from the repo-root .env file into JVM test tasks
-// so PikPakLiveSmokeTest / CleanupProbeTest can talk to the live service.
-// .env lines may use `KEY=value` or `KEY = value` (the latter matches what
-// the user already wrote); comment lines (#) and blanks are ignored.
+// Propagate PikPak credentials into JVM test tasks so PikPakLiveSmokeTest can
+// talk to the live service. Two sources, both git-ignored:
+//   - repo-root local.properties: `pikpak-username`, `pikpak-password`,
+//     optional `pikpak-magnet`, mapped to PIKPAK_USERNAME / PIKPAK_PASSWORD /
+//     PIKPAK_MAGNET.
+//   - repo-root .env: `PIKPAK_*` lines, `KEY=value` or `KEY = value`.
+// Comment lines (#) and blanks are ignored. local.properties wins on conflict.
 tasks.withType<Test>().configureEach {
-    val dotenv = rootProject.file(".env")
-    if (!dotenv.exists()) return@configureEach
-    dotenv.readLines().forEach { raw ->
-        val line = raw.trim()
-        if (line.isEmpty() || line.startsWith("#")) return@forEach
-        val eq = line.indexOf('=')
-        if (eq <= 0) return@forEach
-        val key = line.substring(0, eq).trim()
-        val value = line.substring(eq + 1).trim().trim('"').trim('\'')
-        if (key.startsWith("PIKPAK_")) environment(key, value)
+    fun readKeyValues(file: File): Map<String, String> {
+        if (!file.exists()) return emptyMap()
+        return file.readLines().mapNotNull { raw ->
+            val line = raw.trim()
+            if (line.isEmpty() || line.startsWith("#")) return@mapNotNull null
+            val eq = line.indexOf('=')
+            if (eq <= 0) return@mapNotNull null
+            val key = line.substring(0, eq).trim()
+            val value = line.substring(eq + 1).trim().trim('"').trim('\'')
+            key to value
+        }.toMap()
     }
+
+    readKeyValues(rootProject.file(".env"))
+        .filterKeys { it.startsWith("PIKPAK_") }
+        .forEach { (key, value) -> environment(key, value) }
+    readKeyValues(rootProject.file("local.properties"))
+        .filterKeys { it.startsWith("pikpak-") }
+        .forEach { (key, value) ->
+            environment("PIKPAK_" + key.removePrefix("pikpak-").replace('-', '_').uppercase(), value)
+        }
 }
 
 kotlin {
@@ -37,18 +50,20 @@ kotlin {
     sourceSets.commonMain.dependencies {
         api(libs.kotlinx.coroutines.core)
         api(libs.kotlinx.datetime)
+        api(projects.torrent.torrentApi)
         api(projects.utils.platform)
         api(projects.utils.coroutines)
         api(projects.utils.io)
         api(projects.utils.ktorClient)
         api(projects.utils.logging)
+        implementation(libs.atomicfu)
         implementation(libs.kotlinx.serialization.json)
         implementation(libs.ktor.client.content.negotiation)
         implementation(libs.ktor.serialization.kotlinx.json)
-        // Auth, captcha, rate limiting, OSS signing, GCID etc. live in the
-        // SDK — this module only supplies the offline-task orchestration
-        // layer on top. See https://github.com/NihilDigit/pikpak-kotlin.
-        api("io.github.nihildigit:pikpak-kotlin:0.4.3")
+        // Auth, captcha, rate limiting, OSS signing, GCID and the range reader
+        // live in the SDK; this module supplies the offline-task orchestration
+        // and the transport on top. See https://github.com/NihilDigit/pikpak-kotlin.
+        api("io.github.nihildigit:pikpak-kotlin:0.5.2")
     }
     sourceSets.commonTest.dependencies {
         // kotlin-test + kotlinx-coroutines-test come in transitively from
