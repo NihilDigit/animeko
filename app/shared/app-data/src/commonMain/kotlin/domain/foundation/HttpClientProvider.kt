@@ -170,7 +170,10 @@ class DefaultHttpClientProvider(
         features: Set<ScopedHttpClientFeatureKeyValue<*>>,
         proxyConfig: ProxyConfig?,
     ): HttpClient {
-        return createDefaultHttpClient {
+        val requestedUserAgent = features.firstOrNull { it.key == UserAgentFeature }?.value
+        return createDefaultHttpClient(
+            installBrowserUserAgent = requestedUserAgent != ScopedHttpClientUserAgent.NONE,
+        ) {
             for (feature in features) {
                 val handler = featureHandlers[feature.key]
                     ?: error("No handler for feature ${feature.key}")
