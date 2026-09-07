@@ -26,7 +26,6 @@ import me.him188.ani.app.domain.media.cache.engine.MediaCacheEngineKey
 import me.him188.ani.app.domain.media.cache.engine.MediaStats
 import me.him188.ani.app.domain.media.fetch.MediaFetcher
 import me.him188.ani.app.domain.media.resolver.EpisodeMetadata
-import me.him188.ani.app.domain.media.resolver.TorrentFileLabel
 import me.him188.ani.app.domain.media.resolver.TorrentMediaResolver
 import me.him188.ani.datasources.api.CachedMedia
 import me.him188.ani.datasources.api.EpisodeSort
@@ -249,8 +248,9 @@ class MediaCacheStorageSource(
             .toList()
             .mapNotNull { cache ->
                 val files = packFiles(cache)
-                val kind = TorrentFileLabel.kindOf(query.episodeSort)
-                if (isSpecial && files.none { TorrentFileLabel.of(it)?.kind == kind }) return@mapNotNull null
+                if (isSpecial && !TorrentMediaResolver.hasVideoFileOfKind(files, { this }, query.episodeSort)) {
+                    return@mapNotNull null
+                }
 
                 val path = TorrentMediaResolver.selectVideoFileEntryExact(
                     files,

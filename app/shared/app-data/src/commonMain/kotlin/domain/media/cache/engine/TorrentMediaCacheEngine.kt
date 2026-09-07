@@ -730,7 +730,7 @@ class TorrentMediaCacheEngine(
                 ?.let { path -> files.firstOrNull { it.pathInTorrent == path } }
                 ?: TorrentMediaResolver.selectVideoFileEntry(
                     files,
-                    { fileName },
+                    { pathInTorrent },
                     listOf(metadata.episodeName),
                     episodeSort = metadata.episodeSort,
                     episodeEp = metadata.episodeEp,
