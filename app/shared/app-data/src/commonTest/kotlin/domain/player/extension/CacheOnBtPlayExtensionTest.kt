@@ -100,15 +100,18 @@ class CacheOnBtPlayExtensionTest : AbstractPlayerExtensionTest() {
         if (media.kind == MediaSourceKind.BitTorrent) FakeTorrentBackedMediaDataProvider() else TestMediaDataProvider()
     }
 
-    private inner class RecordingStorage : MediaCacheStorage {
+    private inner class RecordingStorage(
+        engineKey: MediaCacheEngineKey = MediaCacheEngineKey.Anitorrent,
+    ) : MediaCacheStorage {
         override val mediaSourceId = MediaCacheManager.LOCAL_FS_MEDIA_SOURCE_ID
         override val cacheMediaSource: MediaSource get() = throw UnsupportedOperationException()
-        override val engine = DummyMediaCacheEngine(mediaSourceId, engineKey = MediaCacheEngineKey.Anitorrent)
+        override val engine = DummyMediaCacheEngine(mediaSourceId, engineKey = engineKey)
         override val listFlow = MutableStateFlow<List<MediaCache>>(emptyList())
         override val stats = MutableStateFlow(MediaStats.Unspecified)
 
         var cacheCalls = 0
         lateinit var lastMetadata: MediaCacheMetadata
+        var lastMedia: Media? = null
 
         override suspend fun restorePersistedCaches() {}
         override suspend fun cache(
@@ -119,6 +122,7 @@ class CacheOnBtPlayExtensionTest : AbstractPlayerExtensionTest() {
         ): MediaCache {
             cacheCalls++
             lastMetadata = metadata
+            lastMedia = media
             val cache = TestMediaCache(
                 CachedMedia(
                     media,
@@ -155,13 +159,14 @@ class CacheOnBtPlayExtensionTest : AbstractPlayerExtensionTest() {
 
     private fun TestScope.createCase(
         resolver: MediaResolver = btAsAnitorrentResolver,
+        engineKey: MediaCacheEngineKey = MediaCacheEngineKey.Anitorrent,
         config: (RecordingStorage, MediaSelectorTestBuilder) -> Unit = { _, _ -> },
     ): Context {
         contract { callsInPlace(config, InvocationKind.EXACTLY_ONCE) }
         Dispatchers.setMain(StandardTestDispatcher(testScheduler))
         val testScope = this.childScope()
         val suite = EpisodePlayerTestSuite(this, testScope)
-        val storage = RecordingStorage()
+        val storage = RecordingStorage(engineKey)
         val manager = MediaCacheManagerImpl(listOf(storage), testScope)
         suite.registerComponent<MediaCacheManager> { manager }
         suite.registerComponent<GetMediaSelectorSettingsFlowUseCase> {
@@ -226,8 +231,12 @@ class CacheOnBtPlayExtensionTest : AbstractPlayerExtensionTest() {
         scope.cancel()
     }
 
+    /**
+     * 记录建立之后不再撤销. 曾经按「一个字节都没下」把它删掉, 而下载饥饿的几秒里正好是这个样子,
+     * 于是整季包切集时丢掉本地命中.
+     */
     @Test
-    fun deleteAutoCacheOnSwitch() = runTest {
+    fun autoCacheSurvivesSwitch() = runTest {
         val bt = CompletableDeferred<List<Media>>()
         val web = CompletableDeferred<List<Media>>()
         val context = createCase { _, builder ->
@@ -269,7 +278,7 @@ class CacheOnBtPlayExtensionTest : AbstractPlayerExtensionTest() {
         assertEquals(1, storage.listFlow.value.size)
         state.mediaSelectorFlow.filterNotNull().first().select(webMedia)
         advanceUntilIdle()
-        assertEquals(0, storage.listFlow.value.size)
+        assertEquals(1, storage.listFlow.value.size)
         scope.cancel()
     }
 
@@ -325,6 +334,7 @@ class CacheOnBtPlayExtensionTest : AbstractPlayerExtensionTest() {
     fun userCacheNotDeleted() = runTest {
         val bt = CompletableDeferred<List<Media>>()
         val web = CompletableDeferred<List<Media>>()
+        lateinit var manualCache: TestMediaCache
         val context = createCase { storage, builder ->
             builder.mediaSources.add(
                 createTestMediaSourceInstance(
@@ -363,6 +373,7 @@ class CacheOnBtPlayExtensionTest : AbstractPlayerExtensionTest() {
                 MediaCacheMetadata("1", "1", "test", listOf("test"), EpisodeSort(1), EpisodeSort(1), "test"),
             )
             storage.listFlow.value += manual
+            manualCache = manual
         }
         val (scope, suite, state, storage) = context
         startFetcher(state, scope)
@@ -374,8 +385,123 @@ class CacheOnBtPlayExtensionTest : AbstractPlayerExtensionTest() {
         advanceUntilIdle()
         state.mediaSelectorFlow.filterNotNull().first().select(webMedia)
         advanceUntilIdle()
-        assertEquals(1, storage.listFlow.value.size)
+        // 播放 BT 会再建一条自动记录, 它同样留着; 这里只关心用户自己建的那条还在
+        assertEquals(true, storage.listFlow.value.contains(manualCache))
         scope.cancel()
+    }
+
+    /**
+     * 整季包在选择器里给出的兄弟剧集命中是 CachedMedia, 但这一集还没有缓存记录, 播放时要建立记录,
+     * 并且记录挂在原 media 上, 而不是缓存包装.
+     */
+    @Test
+    fun autoCachePackSiblingHit() = runTest {
+        val deferred = CompletableDeferred<List<Media>>()
+        val context = createCase(resolver = ConfigurableResolver { FakeTorrentBackedMediaDataProvider() }) { _, builder ->
+            builder.mediaSources.add(
+                createTestMediaSourceInstance(
+                    TestHttpMediaSource(
+                        mediaSourceId = MediaCacheManager.LOCAL_FS_MEDIA_SOURCE_ID,
+                        kind = MediaSourceKind.LocalCache,
+                        fetch = {
+                            SinglePagePagedSource {
+                                deferred.await().map { MediaMatch(it, MatchKind.FUZZY) }.asFlow()
+                            }
+                        },
+                    ),
+                ),
+            )
+        }
+        val (scope, suite, state, storage) = context
+        startFetcher(state, scope)
+        val origin = suite.mediaSelectorTestBuilder.createMedia("bt", kind = MediaSourceKind.BitTorrent)
+        val siblingHit = CachedMedia(origin, MediaCacheManager.LOCAL_FS_MEDIA_SOURCE_ID, origin.download)
+        deferred.complete(listOf(siblingHit))
+        state.mediaSelectorFlow.filterNotNull().first().select(siblingHit)
+        advanceUntilIdle()
+        assertEquals(1, storage.cacheCalls)
+        assertEquals(origin.mediaId, storage.lastMedia?.mediaId)
+        scope.cancel()
+    }
+
+    @Test
+    fun skipAutoCacheWhenCachedMediaAlreadyHasRecord() = runTest {
+        val deferred = CompletableDeferred<List<Media>>()
+        val origin = TestMediaList[0]
+        val context = createCase(resolver = ConfigurableResolver { FakeTorrentBackedMediaDataProvider() }) { storage, builder ->
+            builder.mediaSources.add(
+                createTestMediaSourceInstance(
+                    TestHttpMediaSource(
+                        mediaSourceId = MediaCacheManager.LOCAL_FS_MEDIA_SOURCE_ID,
+                        kind = MediaSourceKind.LocalCache,
+                        fetch = {
+                            SinglePagePagedSource {
+                                deferred.await().map { MediaMatch(it, MatchKind.FUZZY) }.asFlow()
+                            }
+                        },
+                    ),
+                ),
+            )
+            storage.listFlow.value += TestMediaCache(
+                CachedMedia(
+                    origin,
+                    "local",
+                    ResourceLocation.LocalFile(nullFilePath),
+                    MediaSourceLocation.Local,
+                    MediaSourceKind.LocalCache,
+                ),
+                MediaCacheMetadata("1", "1", "test", listOf("test"), EpisodeSort(1), EpisodeSort(1), "test"),
+            )
+        }
+        val (scope, _, state, storage) = context
+        startFetcher(state, scope)
+        val cached = CachedMedia(origin, MediaCacheManager.LOCAL_FS_MEDIA_SOURCE_ID, origin.download)
+        deferred.complete(listOf(cached))
+        state.mediaSelectorFlow.filterNotNull().first().select(cached)
+        advanceUntilIdle()
+        assertEquals(0, storage.cacheCalls)
+        scope.cancel()
+    }
+
+    /**
+     * PikPak 上播放同样建记录: 没有记录, 本地缓存数据源就没有命中, 重进这一集要重新走
+     * 一遍网络选择器. 下不下满是记录建立之后的事, 由引擎决定.
+     */
+    @Test
+    fun autoCacheOnPikPak() = runTest {
+        val (scope, storage) = runPikPakPlayback()
+
+        assertEquals(1, storage.cacheCalls)
+        assertEquals(storage.lastMetadata.autoCached, true)
+        scope.cancel()
+    }
+
+    private suspend fun TestScope.runPikPakPlayback(
+        engineKey: MediaCacheEngineKey = MediaCacheEngineKey.PikPak,
+    ): Pair<CoroutineScope, RecordingStorage> {
+        val deferred = CompletableDeferred<List<Media>>()
+        val context = createCase(engineKey = engineKey) { _, builder ->
+            builder.mediaSources.add(
+                createTestMediaSourceInstance(
+                    TestHttpMediaSource(
+                        mediaSourceId = "bt",
+                        kind = MediaSourceKind.BitTorrent,
+                        fetch = {
+                            SinglePagePagedSource {
+                                deferred.await().map { MediaMatch(it, MatchKind.EXACT) }.asFlow()
+                            }
+                        },
+                    ),
+                ),
+            )
+        }
+        val (scope, suite, state, storage) = context
+        startFetcher(state, scope)
+        val media = suite.mediaSelectorTestBuilder.createMedia("bt", kind = MediaSourceKind.BitTorrent)
+        deferred.complete(listOf(media))
+        state.mediaSelectorFlow.filterNotNull().first().select(media)
+        advanceUntilIdle()
+        return scope to storage
     }
 
     @Test
