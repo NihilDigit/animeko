@@ -16,20 +16,15 @@ import kotlinx.serialization.descriptors.PrimitiveSerialDescriptor
 import kotlinx.serialization.descriptors.SerialDescriptor
 import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
-import me.him188.ani.app.data.models.preference.PikPakConfig.Companion.SLOT_QUEUE_MAX_NUMERIC
-import me.him188.ani.app.data.models.preference.PikPakConfig.Companion.SLOT_QUEUE_UNLIMITED
 import me.him188.ani.utils.io.obscure
 import me.him188.ani.utils.io.tryReveal
 
 /**
- * User-configurable settings for the PikPak offline-download backend.
+ * User-configurable settings for the PikPak backend.
  *
- * The engine runs a server-side slot cache: completed offline tasks stay in a
- * well-known working folder on the user's PikPak drive, keyed by source
- * bucket, so replays of the same magnet are served straight from the cache.
- * Old buckets are evicted to honor [slotQueueLength] — they are *not* deleted
- * immediately after each resolve. See `PikPakOfflineDownloadEngine` for the
- * full eviction policy.
+ * Nothing is kept in the cloud: a magnet resolves straight to a file tree, and
+ * a file object is created from a gcid only to mint a CDN link, then dropped.
+ * So there are no slots and no eviction policy here.
  *
  * [refreshToken] is written by the engine after a successful signin/refresh
  * (not user-editable). It lets the next app launch skip the rate-limited
@@ -54,36 +49,36 @@ data class PikPakConfig(
     @Serializable(with = ObscuredStringSerializer::class)
     val refreshToken: String = "",
     /**
-     * How many distinct source buckets the engine keeps cached in its
-     * working folder ("Animeko-Playing"). Real numeric values 1..13 are
-     * bucket caps; the UI also offers a final "unlimited" stop (stored as
-     * [SLOT_QUEUE_UNLIMITED]) that disables eviction entirely.
+     * Playback/cache quality. [VARIANT_ORIGINAL] streams the file the torrent
+     * actually contains; the other values are PikPak's server-side transcodes,
+     * which carry no embedded subtitles and 49 kbps audio.
+     *
+     * The variant is part of the on-disk identity of a download — the bytes on
+     * disk are one variant's stream and its length is not the torrent's — so
+     * switching means re-downloading. See `docs/pikpak-ani-design.md` 4.5.
      */
-    val slotQueueLength: Int = 1,
-    /** Number of parallel HTTP range requests used by explicit PikPak caches. */
-    val downloadConcurrency: Int = DEFAULT_DOWNLOAD_CONCURRENCY,
+    val variant: String = VARIANT_ORIGINAL,
+    /**
+     * 用户已经答复过「云盘上旧版留下的目录要不要清理」这一问.
+     *
+     * 旧目录只可能来自升级之前的那个版本, 不会再产生, 所以答复过一次就不再问——无论答的是删还是
+     * 留. 引擎自己永远不动它们.
+     */
+    val legacyNoticeAnswered: Boolean = false,
 ) {
     override fun toString(): String {
         return "PikPakConfig(enabled=$enabled, username=$username, password.hash=${password.hashCode()}, " +
                 "refreshToken.hash=${refreshToken.let { if (it.isNotEmpty()) it.hashCode() else "" }}, " +
-                "slotQueueLength=$slotQueueLength, downloadConcurrency=$downloadConcurrency)"
+                "variant=$variant, legacyNoticeAnswered=$legacyNoticeAnswered)"
     }
 
     companion object {
         val Default = PikPakConfig()
 
-        /** Last numeric step on the slider. */
-        const val SLOT_QUEUE_MAX_NUMERIC: Int = 13
+        const val VARIANT_ORIGINAL: String = "original"
 
-        /**
-         * One step past [SLOT_QUEUE_MAX_NUMERIC]: the dedicated "no eviction"
-         * stop. Any value ≥ this is treated as unlimited by the engine.
-         */
-        const val SLOT_QUEUE_UNLIMITED: Int = SLOT_QUEUE_MAX_NUMERIC + 1
-
-        const val MIN_DOWNLOAD_CONCURRENCY: Int = 1
-        const val MAX_DOWNLOAD_CONCURRENCY: Int = 8
-        const val DEFAULT_DOWNLOAD_CONCURRENCY: Int = 4
+        /** In UI order: 原画 first, then descending transcode quality. */
+        val VARIANTS: List<String> = listOf(VARIANT_ORIGINAL, "1080P", "720P", "480P")
     }
 }
 

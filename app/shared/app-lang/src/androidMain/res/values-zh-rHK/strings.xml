@@ -1294,6 +1294,9 @@
     <string name="subject_episode_statistics_error_details">錯誤詳情</string>
     <string name="subject_episode_statistics_error">錯誤</string>
     <string name="subject_episode_statistics_no_matching_file">未匹配到檔案</string>
+    <string name="subject_episode_no_matching_file_dialog_title">資源中未找到本集</string>
+    <string name="subject_episode_no_matching_file_dialog_description">選擇要播放的檔案</string>
+    <string name="subject_episode_no_matching_file_dialog_cancel">取消</string>
     <string name="subject_episode_statistics_resolution_timed_out">解析超時</string>
     <string name="subject_episode_statistics_unsupported_media">不支援的影片類型</string>
     <string name="subject_episode_statistics_unknown_error_tap">未知錯誤，點擊查看</string>

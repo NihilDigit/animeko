@@ -33,6 +33,7 @@ import me.him188.ani.app.torrent.api.peer.PeerFilter
 import me.him188.ani.app.torrent.api.peer.PeerInfo
 import me.him188.ani.datasources.api.source.MediaSourceLocation
 import me.him188.ani.utils.coroutines.childScope
+import me.him188.ani.utils.io.SystemPath
 import me.him188.ani.utils.coroutines.onReplacement
 import me.him188.ani.utils.ktor.ScopedHttpClient
 import me.him188.ani.utils.logging.debug
@@ -64,9 +65,29 @@ interface TorrentEngine : AutoCloseable {
     val isSupported: Boolean
 
     /**
+     * 该引擎的数据根目录.
+     *
+     * 用于在不唤醒引擎的前提下判断磁盘上是否有该引擎的残留. 安卓上唤醒 anitorrent 意味着启动
+     * `AniTorrentService` 并弹出前台通知, 只为了确认「没有东西要清理」而付这个代价不合适.
+     */
+    val saveDir: SystemPath
+
+    /**
      * 测试是否可以连接到这个引擎. 不能连接一定代表无法使用, 但能连接不一定代表能使用.
      */
     suspend fun testConnection(): Boolean
+
+    /**
+     * 本引擎能否承担 [uri] 指向的资源. 默认 true, 只有云端引擎会回答 false.
+     *
+     * 存在的理由是云端引擎会因为与资源本身无关的原因供不了这一条:
+     * PikPak 只能给出它的内容索引里已有的磁链, 索引不到就没有秒传;
+     * 而秒传按全尺寸计费, 一个 23.5 GiB 的季度包就占满用户 23.5 GiB 配额, 云盘满了同样给不出.
+     * 两种情况下都应该退回 anitorrent, 它不占云端配额.
+     *
+     * 与 [isSupported] 的区别: [isSupported] 只说引擎有没有开, 与具体资源无关.
+     */
+    suspend fun canServe(uri: String): Boolean = true
 
     /**
      * 创建一个下载器. 若已经有一个下载器在运行, 则会返回同一个下载器.
