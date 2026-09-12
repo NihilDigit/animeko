@@ -118,13 +118,24 @@ object UserAgentFeatureHandler :
         when (value) {
             ScopedHttpClientUserAgent.ANI -> config.userAgent(getAniUserAgent())
             ScopedHttpClientUserAgent.BROWSER -> config.BrowserUserAgent()
+            // NONE 由 DefaultHttpClientProvider 处理: 它要在 createDefaultHttpClient 里
+            // 跳过默认的 BrowserUserAgent, 插件装上之后没有卸载的办法.
+            ScopedHttpClientUserAgent.NONE -> {}
         }
     }
 }
 
 enum class ScopedHttpClientUserAgent {
     ANI,
-    BROWSER
+    BROWSER,
+
+    /**
+     * 不安装 [io.ktor.client.plugins.UserAgent] 插件, 由调用方自己在请求上写 User-Agent.
+     *
+     * 该插件是 append 语义, 自带 User-Agent 的请求会带上两个值; PikPak 的 captcha 接口据此
+     * 判定「no client info found」并拒绝请求.
+     */
+    NONE
 }
 
 // endregion
