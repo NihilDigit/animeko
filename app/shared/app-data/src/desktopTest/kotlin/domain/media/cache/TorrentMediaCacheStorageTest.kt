@@ -12,9 +12,11 @@ package me.him188.ani.app.domain.media.cache
 import androidx.datastore.core.DataStore
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.advanceUntilIdle
 import me.him188.ani.app.data.persistent.MemoryDataStore
 import me.him188.ani.app.domain.media.cache.engine.TorrentMediaCacheEngine
 import me.him188.ani.app.domain.media.cache.storage.MediaCacheSave
@@ -22,6 +24,9 @@ import me.him188.ani.app.domain.media.cache.storage.TorrentMediaCacheStorage
 import me.him188.ani.app.domain.media.createTestDefaultMedia
 import me.him188.ani.app.domain.media.createTestMediaProperties
 import me.him188.ani.app.domain.media.resolver.EpisodeMetadata
+import me.him188.ani.app.domain.torrent.TorrentEngine
+import me.him188.ani.app.torrent.api.files.AbstractTorrentFileEntry
+import me.him188.ani.app.torrent.api.files.FilePriority
 import me.him188.ani.datasources.api.DefaultMedia
 import me.him188.ani.datasources.api.EpisodeSort
 import me.him188.ani.datasources.api.MediaCacheMetadata
@@ -33,8 +38,10 @@ import me.him188.ani.datasources.api.topic.ResourceLocation
 import me.him188.ani.datasources.api.unwrapCached
 import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.EmptyCoroutineContext
+import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertSame
@@ -74,6 +81,171 @@ class TorrentMediaCacheStorageTest : AbstractTorrentMediaCacheEngineTest() {
         }
     }
 
+    ///////////////////////////////////////////////////////////////////////////
+    // 下载策略
+    ///////////////////////////////////////////////////////////////////////////
+
+    /**
+     * 自动记录在开关关闭时只跟随播放: 记录建立并 resume, 但不给文件提优先级, 引擎因此不为它取字节.
+     */
+    @Test
+    fun `auto cache follows playback while full download is off`() = runTest {
+        val storage = createStorage(
+            createEngine(
+                fullDownloadForAutoCaches = false,
+                onDownloadStarted = { it.onTorrentChecked() },
+            ),
+        )
+
+        val cache = storage.cache(testMedia, mediaCacheMetadata(autoCached = true), resume = true)
+
+        assertEquals(FilePriority.IGNORE, cache.requestingPriority())
+    }
+
+    @Test
+    fun `explicit cache downloads fully while full download is off`() = runTest {
+        val storage = createStorage(
+            createEngine(
+                fullDownloadForAutoCaches = false,
+                onDownloadStarted = { it.onTorrentChecked() },
+            ),
+        )
+
+        val cache = storage.cache(testMedia, mediaCacheMetadata(autoCached = false), resume = true)
+
+        assertEquals(FilePriority.NORMAL, cache.requestingPriority())
+    }
+
+    /**
+     * 缓存页上的恢复按钮表达「我要这一条」, 自动记录就此转成显式记录, 之后一律下满.
+     */
+    @Test
+    fun `resumeByUser turns an auto cache into an explicit one`() = runTest {
+        val storage = createStorage(
+            createEngine(
+                fullDownloadForAutoCaches = false,
+                onDownloadStarted = { it.onTorrentChecked() },
+            ),
+        )
+
+        val cache = storage.cache(testMedia, mediaCacheMetadata(autoCached = true), resume = true)
+        assertEquals(FilePriority.IGNORE, cache.requestingPriority())
+
+        cache.resumeByUser()
+        advanceUntilIdle()
+        assertEquals(false, cache.metadata.autoCached)
+        assertEquals(FilePriority.NORMAL, cache.requestingPriority())
+        // 转换要落盘, 否则重启后又变回自动记录
+        assertEquals(
+            false,
+            metadataFlow.first().single { it.origin.mediaId == cache.origin.mediaId }.metadata.autoCached,
+        )
+    }
+
+    /**
+     * 整季包各集的记录共用一行 torrent_cache. 曾经删掉其中一集就把行删了, 同一个包的其他剧集在下次
+     * 启动时 restore 返回 null, 无声消失.
+     */
+    @Test
+    fun `deleting one record of a pack keeps the row for the others`() = runTest {
+        val storage = createStorage(
+            createEngine(onDownloadStarted = { it.onTorrentChecked() }),
+        )
+
+        val ep1 = storage.cache(testMedia, mediaCacheMetadata(episodeId = "1"), resume = false)
+        val ep2 = storage.cache(testMedia, mediaCacheMetadata(episodeId = "2"), resume = false)
+        assertEquals(2, storage.listFlow.first().size)
+
+        assertEquals(true, storage.delete(ep1))
+        assertEquals(listOf(ep2), storage.listFlow.first())
+        assertNotNull(torrentInfoDatabase.get(testMedia.mediaId))
+
+        assertEquals(true, storage.delete(ep2))
+        assertNull(torrentInfoDatabase.get(testMedia.mediaId))
+    }
+
+    /**
+     * 「下完了」是每条记录自己的事. 数据库行按 mediaId 建主键, 整季包里最先下完的那个文件写进行里,
+     * 曾经让包内每一集都恢复成指向那一个文件的 LocalFileMediaCache.
+     */
+    @Test
+    fun `a completed record does not make its pack siblings completed`() = runTest {
+        val storage = createStorage(
+            createEngine(onDownloadStarted = { it.onTorrentChecked() }),
+        )
+        val ep1 = storage.cache(testMedia, mediaCacheMetadata(episodeId = "1"), resume = false)
+        storage.cache(testMedia, mediaCacheMetadata(episodeId = "2"), resume = false)
+
+        val path = assertNotNull(ep1.fileHandle.entry.first()).pathInTorrent
+        val row = assertNotNull(torrentInfoDatabase.get(testMedia.mediaId))
+        // 行是种子粒度的, 它确实记着「有文件下完了」
+        torrentInfoDatabase.upsert(row.copy(completed = true, pathInTorrent = path))
+        File(dir, row.relativeDir).resolve(path).apply {
+            parentFile.mkdirs()
+            writeText("x")
+        }
+        // 只有第一集自己标记了完成
+        metadataStore.updateData { list ->
+            list.map { save ->
+                if (save.metadata.episodeId == "1") {
+                    save.copy(metadata = save.metadata.copy(completed = true, pathInTorrent = path))
+                } else {
+                    save
+                }
+            }
+        }
+        storage.close()
+
+        val restored = createStorage(createEngine(onDownloadStarted = { it.onTorrentChecked() }))
+        restored.restorePersistedCaches()
+
+        // 恢复跑在 IO 线程上, 虚拟时间推不动它; 列表只在全部恢复完成后整体更新, 等它出现两条即可.
+        val byEpisode = restored.listFlow.first { it.size == 2 }.associateBy { it.metadata.episodeId }
+        assertIs<LocalFileMediaCache>(byEpisode.getValue("1"))
+        assertIs<TorrentMediaCacheEngine.TorrentMediaCache>(byEpisode.getValue("2"))
+    }
+
+    /**
+     * 引擎在设置里被关掉 (PikPak 被禁用或凭据被清空) 时 isSupported 为 false. restore 曾经先问
+     * supports 再看有没有本地文件, 已经下完的记录就此在重启后从缓存列表里消失.
+     */
+    @Test
+    fun `a completed record restores while the engine is disabled`() = runTest {
+        val storage = createStorage(
+            createEngine(onDownloadStarted = { it.onTorrentChecked() }),
+        )
+        val cache = storage.cache(testMedia, mediaCacheMetadata(), resume = false)
+        val path = assertNotNull(cache.fileHandle.entry.first()).pathInTorrent
+        val row = assertNotNull(torrentInfoDatabase.get(testMedia.mediaId))
+        File(dir, row.relativeDir).resolve(path).apply {
+            parentFile.mkdirs()
+            writeText("x")
+        }
+        metadataStore.updateData { list ->
+            list.map { save -> save.copy(metadata = save.metadata.copy(completed = true, pathInTorrent = path)) }
+        }
+        storage.close()
+
+        val disabled = UnsupportedTorrentEngine(createTestAnitorrentEngine(coroutineContext))
+        val restored = createStorage(createEngine(engine = disabled))
+        restored.restorePersistedCaches()
+
+        // 恢复跑在 IO 线程上, 虚拟时间推不动它.
+        assertIs<LocalFileMediaCache>(restored.listFlow.first { it.isNotEmpty() }.single())
+    }
+
+    /** 除 [isSupported] 之外都照旧: 要测的正是引擎关掉之后还能不能恢复出已完成的记录. */
+    private class UnsupportedTorrentEngine(
+        private val delegate: TorrentEngine,
+    ) : TorrentEngine by delegate {
+        override val isSupported: Boolean get() = false
+    }
+
+    private suspend fun TorrentMediaCacheEngine.TorrentMediaCache.requestingPriority(): FilePriority {
+        val entry = assertNotNull(fileHandle.entry.first())
+        return (entry as AbstractTorrentFileEntry).requestingPriority
+    }
+
     private fun TestScope.createStorage(engine: TorrentMediaCacheEngine = createEngine()): TorrentMediaCacheStorage {
         return TorrentMediaCacheStorage(
             CACHE_MEDIA_SOURCE_ID,
@@ -87,14 +259,15 @@ class TorrentMediaCacheStorageTest : AbstractTorrentMediaCacheEngineTest() {
         }
     }
 
-    private fun mediaCacheMetadata() = MediaCacheMetadata(
+    private fun mediaCacheMetadata(autoCached: Boolean = false, episodeId: String = "1") = MediaCacheMetadata(
         subjectId = "1",
-        episodeId = "1",
+        episodeId = episodeId,
         subjectNameCN = "1",
         subjectNames = emptyList(),
         episodeSort = EpisodeSort("02"),
         episodeEp = EpisodeSort("02"),
         episodeName = "测试剧集",
+        autoCached = autoCached,
     )
 
     ///////////////////////////////////////////////////////////////////////////

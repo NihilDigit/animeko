@@ -85,7 +85,7 @@ import me.him188.ani.utils.httpdownloader.DownloadState
         PlaybackHistoryRecordEntity::class,
         PlaybackHistoryPendingOpEntity::class,
     ],
-    version = 22,
+    version = 23,
     autoMigrations = [
         AutoMigration(from = 1, to = 2, spec = Migrations.Migration_1_2::class),
         AutoMigration(from = 2, to = 3, spec = Migrations.Migration_2_3::class),
@@ -107,6 +107,11 @@ import me.him188.ani.utils.httpdownloader.DownloadState
         AutoMigration(from = 18, to = 19, spec = Migrations.Migration_18_19::class),
         AutoMigration(from = 20, to = 21, spec = Migrations.Migration_20_21::class),
         AutoMigration(from = 21, to = 22, spec = Migrations.Migration_21_22::class),
+        // torrent_cache 的主键从 mediaId 改为 (mediaId, engine), 新列默认 'anitorrent'.
+        // 不需要 spec: 版本 22 是随 PikPak 作为 HttpMediaCacheEngine 的离线下载后端发布的, 那时
+        // 它的缓存落在 http 表, torrent_cache 里一行 pikpak 都没有, 默认值就是全部旧行的真相.
+        // 存量 PikPak 缓存由 PikPakWebM3uCacheMigration 在应用层转换, 那里知道每行属于哪个引擎.
+        AutoMigration(from = 22, to = 23),
     ],
     exportSchema = true,
 )

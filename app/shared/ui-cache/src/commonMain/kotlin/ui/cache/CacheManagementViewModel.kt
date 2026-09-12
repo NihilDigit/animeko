@@ -129,7 +129,7 @@ class CacheManagementViewModel : AbstractViewModel(), KoinComponent {
 
     fun resumeCache(cache: CacheEpisodeState) {
         backgroundScope.launch {
-            cacheManager.findFirstCache { it.cacheId == cache.cacheId }?.resume()
+            cacheManager.findFirstCache { it.cacheId == cache.cacheId }?.resumeByUser()
         }
     }
 

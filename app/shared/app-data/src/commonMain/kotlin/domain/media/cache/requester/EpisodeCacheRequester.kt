@@ -19,7 +19,9 @@ import kotlinx.coroutines.sync.withLock
 import me.him188.ani.app.data.models.episode.EpisodeInfo
 import me.him188.ani.app.data.models.subject.SubjectInfo
 import me.him188.ani.app.domain.media.cache.MediaCache
+import me.him188.ani.app.domain.media.cache.engine.MediaCacheEngine
 import me.him188.ani.app.domain.media.cache.engine.MediaCacheEngineKey
+import me.him188.ani.app.domain.media.cache.engine.TorrentMediaCacheEngine
 import me.him188.ani.app.domain.media.cache.requester.CacheRequestStage.MediaSelected
 import me.him188.ani.app.domain.media.cache.storage.MediaCacheStorage
 import me.him188.ani.app.domain.media.cache.storage.contains
@@ -146,7 +148,7 @@ class EpisodeCacheRequesterImpl(
                     SelectStorage(
                         this,
                         media,
-                        storagesLazy.first(),
+                        candidateStorages(media),
                     )
                 }
             }
@@ -166,11 +168,12 @@ class EpisodeCacheRequesterImpl(
                                 || episodeRange.contains(request.episodeInfo.sort)
                     } ?: return null
 
+                    val origin = existing.origin.unwrapCached()
                     switchStageLocked {
                         SelectStorage(
                             this,
-                            existing.origin.unwrapCached(),
-                            storagesLazy.first(),
+                            origin,
+                            candidateStorages(origin),
                         )
                     }
                 } finally {
@@ -199,7 +202,7 @@ class EpisodeCacheRequesterImpl(
                             SelectStorage(
                                 this,
                                 selected,
-                                storagesLazy.first(),
+                                candidateStorages(selected),
                             )
                         }
                     }
@@ -224,16 +227,10 @@ class EpisodeCacheRequesterImpl(
     inner class SelectStorage(
         private val previous: SelectMedia,
         private val selectedMedia: Media,
-        storages: List<MediaCacheStorage>,
+        // 已经由 candidateStorages 过滤好. 过滤本身要问云端引擎供不供得了这条资源, 是挂起的,
+        // 放不进构造器.
+        override val storages: List<MediaCacheStorage>,
     ) : CacheRequestStage.SelectStorage, AbstractWorkingStage(previous.request), CloseableStage {
-
-        override val storages: List<MediaCacheStorage> = storages.filter {
-            it.engine.supports(selectedMedia)
-        }.let { supported ->
-            preferredCacheEngineKey(selectedMedia, supported.map { it.engine.engineKey })
-                ?.let { preferred -> supported.filter { it.engine.engineKey == preferred } }
-                ?: supported
-        }
 
         override val fetchSession: MediaFetchSession get() = previous.fetchSession
         override val mediaSelector: MediaSelector get() = previous.mediaSelector
@@ -285,6 +282,15 @@ class EpisodeCacheRequesterImpl(
 
     private val stageLock = Mutex()
 
+    /**
+     * 能承担 [media] 的缓存目标, 已按首选引擎收窄.
+     */
+    private suspend fun candidateStorages(media: Media): List<MediaCacheStorage> {
+        val supported = storagesLazy.first().filter { it.engine.supports(media) }
+        val preferred = preferredCacheEngineKey(media, supported.map { it.engine }) ?: return supported
+        return supported.filter { it.engine.engineKey == preferred }
+    }
+
     override suspend fun request(request: EpisodeCacheRequest): CacheRequestStage.SelectMedia {
         stageLock.withLock {
             val current = stage.value
@@ -332,12 +338,28 @@ class EpisodeCacheRequesterImpl(
     }
 }
 
-private fun preferredCacheEngineKey(
+/**
+ * 给定一个 media 和当前可用的引擎, 选出应当承担缓存的那个. 播放时自动缓存 (CacheOnBtPlayExtension)
+ * 与用户手动缓存必须选同一个引擎, 否则会出现两份下载.
+ *
+ * 挂起是因为 PikPak 供不供得了某条磁链只有问过云端才知道, 约 150 ms 的纯查询. 没有在创建失败后
+ * 重试, 是因为洞在这里: [MediaCacheEngine.supports] 只看
+ * download 是不是磁链, 静态地永远为真, 选错引擎之后 createCache 只会抛出去.
+ */
+internal suspend fun preferredCacheEngineKey(
     media: Media,
-    supported: List<MediaCacheEngineKey>,
+    supported: List<MediaCacheEngine>,
 ): MediaCacheEngineKey? {
     if (media.kind != MediaSourceKind.BitTorrent) return null
 
-    // 启用 PikPak 后，自动接管 BT 源缓存并通过 HTTP 下载。
-    return MediaCacheEngineKey.WebM3u.takeIf { it in supported }
+    // PikPak 引擎启用时接管 BT 源: 磁链交给云端离线, 再按 piece 拉回本地. 它索引不到这条磁链
+    // (或云盘已满) 时退回 anitorrent, 后者不占云端配额.
+    val pikPak = supported.firstOrNull { it.engineKey == MediaCacheEngineKey.PikPak }
+    if (pikPak != null && pikPak.canServe(media.download.uri)) {
+        return MediaCacheEngineKey.PikPak
+    }
+    return MediaCacheEngineKey.Anitorrent.takeIf { key -> supported.any { it.engineKey == key } }
 }
+
+private suspend fun MediaCacheEngine.canServe(uri: String): Boolean =
+    this !is TorrentMediaCacheEngine || torrentEngine.canServe(uri)

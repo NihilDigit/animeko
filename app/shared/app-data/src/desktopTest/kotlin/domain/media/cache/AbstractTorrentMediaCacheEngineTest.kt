@@ -9,10 +9,13 @@
 
 package me.him188.ani.app.domain.media.cache
 
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.job
 import kotlinx.coroutines.test.TestScope
 import me.him188.ani.app.data.models.preference.AnitorrentConfig
+import me.him188.ani.app.data.persistent.database.dao.TorrentCacheInfoDao
+import me.him188.ani.app.data.persistent.database.dao.TorrentCacheInfoEntity
 import me.him188.ani.app.data.persistent.database.dao.createMemoryTorrentCacheInfoDao
 import me.him188.ani.app.domain.media.cache.engine.AlwaysUseTorrentEngineAccess
 import me.him188.ani.app.domain.media.cache.engine.MediaCacheEngineKey
@@ -47,7 +50,7 @@ abstract class AbstractTorrentMediaCacheEngineTest {
     }
 
     @TempDir
-    private lateinit var dir: File
+    protected lateinit var dir: File
     protected val torrentInfoDatabase = createMemoryTorrentCacheInfoDao()
 
     protected lateinit var cacheEngine: TorrentMediaCacheEngine
@@ -87,6 +90,7 @@ abstract class AbstractTorrentMediaCacheEngineTest {
 
     protected fun TestScope.createEngine(
         engine: TorrentEngine = createTestAnitorrentEngine(coroutineContext),
+        fullDownloadForAutoCaches: Boolean = true,
         onDownloadStarted: suspend (session: AnitorrentDownloadSession) -> Unit = {},
     ): TorrentMediaCacheEngine {
         this.coroutineContext.job.invokeOnCompletion {
@@ -102,7 +106,12 @@ abstract class AbstractTorrentMediaCacheEngineTest {
             baseSaveDirProvider = object : MediaSaveDirProvider {
                 override val saveDir: String = dir.absolutePath
             },
+            fullDownloadForAutoCaches = fullDownloadForAutoCaches,
             onDownloadStarted = { onDownloadStarted(it as AnitorrentDownloadSession) },
         ).also { cacheEngine = it }
     }
+
+    /** 这些用例只有一个引擎, 每次写 [CacheEngineKey] 没有信息量. */
+    protected suspend fun TorrentCacheInfoDao.get(mediaId: String): TorrentCacheInfoEntity? =
+        get(mediaId, CacheEngineKey.key)
 }

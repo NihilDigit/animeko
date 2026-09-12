@@ -40,6 +40,7 @@ import kotlinx.coroutines.newSingleThreadContext
 import kotlinx.coroutines.withContext
 import me.him188.ani.app.data.persistent.database.dao.TorrentCacheInfoDao
 import me.him188.ani.app.data.persistent.database.dao.TorrentCacheInfoEntity
+import me.him188.ani.app.domain.media.cache.engine.MediaCacheEngineKey
 import me.him188.ani.app.domain.media.cache.engine.TorrentEngineAccess
 import me.him188.ani.app.domain.media.cache.engine.UnsafeTorrentEngineAccessApi
 import me.him188.ani.app.domain.torrent.IRemoteAniTorrentEngine
@@ -207,7 +208,10 @@ class TorrentServiceConnectionManager(
      */
     private fun allTorrentMediaCacheCompleted(list: List<TorrentCacheInfoEntity>): Boolean {
         val baseSaveDir = mediaCacheBaseSaveDirFlow.value ?: return true
-        list.forEach { entity ->
+        // 只看 anitorrent 的行. AniTorrentService 是 BT 引擎的宿主, PikPak 在进程内跑, 不需要它;
+        // 而 PikPak 跟随播放建的自动记录按设计就永远不会下满 (见 fullDownloadForAutoCaches),
+        // 把它们算进来会让这个前台服务和它的通知一直留着.
+        list.filter { it.engine == MediaCacheEngineKey.Anitorrent.key }.forEach { entity ->
             if (!entity.completed) return false
             val pathInTorrent = entity.pathInTorrent.takeIf { it.isNotEmpty() } ?: return false
 

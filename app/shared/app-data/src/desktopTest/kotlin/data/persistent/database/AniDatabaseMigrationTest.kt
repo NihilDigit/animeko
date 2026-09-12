@@ -124,6 +124,39 @@ class AniDatabaseMigrationTest {
         }
     }
 
+    /**
+     * 22→23 把 torrent_cache 的主键改成 (mediaId, engine), Room 用建新表复制的方式实现, 所以
+     * 要验的是行有没有在复制中活下来, 以及新列填的是什么.
+     *
+     * 版本 22 的库里不会有 PikPak 的行: 那时 PikPak 是 HttpMediaCacheEngine 的离线下载后端,
+     * 缓存落在 http 表. 所以 'anitorrent' 这个 SQL 默认值就是全部旧行的真相, 迁移不必去认引擎.
+     */
+    @Test
+    fun `MIG-06 v22到v23把旧行原样搬过来并标成anitorrent`() {
+        val helper = createHelper()
+        helper.createDatabase(22).use { connection ->
+            connection.execSQL(
+                """
+                INSERT INTO `torrent_cache`
+                    (`mediaId`, `torrentData`, `relativeDir`, `completed`, `pathInTorrent`, `downloadSize`, `uploadSize`)
+                VALUES
+                    ('m1', x'01', '/anitorrent/1234', 1, 'a.mkv', 10, 20)
+                """.trimIndent(),
+            )
+        }
+        helper.runMigrationsAndValidate(23, emptyList()).use { connection ->
+            connection
+                .prepare("SELECT `engine`, `relativeDir`, `completed`, `pathInTorrent` FROM `torrent_cache`")
+                .use { statement ->
+                    assertTrue(statement.step(), "the row must survive the table recreation")
+                    assertEquals("anitorrent", statement.getText(0))
+                    assertEquals("/anitorrent/1234", statement.getText(1))
+                    assertEquals(1, statement.getInt(2))
+                    assertEquals("a.mkv", statement.getText(3))
+                }
+        }
+    }
+
     @Test
     fun `MIG-04 缺失手动19-20迁移时从v16迁移到v21失败`() {
         val helper = createHelper()
