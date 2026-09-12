@@ -15,10 +15,9 @@ import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
 /**
- * Unit tests for [sourceKeyFor] — the infohash/URL → stable bucket-name
- * mapping used by the engine's server-side slot folder. These have to be
- * pure (no network, no PikPak dependencies) because the result ends up as
- * a filename under the user's drive; a bug here bleeds across sources.
+ * Unit tests for [sourceKeyFor] — the infohash/URL → save directory name
+ * mapping. The URLs below are the real shapes the five sources Animeko can
+ * reach actually publish, sampled 2026-09-12.
  */
 class SourceKeyForTest {
 
@@ -130,6 +129,22 @@ class SourceKeyForTest {
         val weird = "magnet:?dn=missing-xt"
         val key = sourceKeyFor(weird)
         assertTrue(key.startsWith("h-"))
+    }
+
+    @Test
+    fun `a mikan torrent URL keys the same as the magnet for that infohash`() {
+        val hash = "fc274da8b8ae6858eb3429c89096467dbc779311"
+        val mikan = "https://mikanani.me/Download/20260911/$hash.torrent"
+        assertEquals(sourceKeyFor("magnet:?xt=urn:btih:$hash"), sourceKeyFor(mikan))
+        assertEquals(hash.uppercase(), sourceKeyFor(mikan))
+    }
+
+    @Test
+    fun `torrent URLs carrying no infohash keep falling back to the digest`() {
+        val nyaa = "https://nyaa.si/download/2157637.torrent"
+        val bangumiMoe = "https://bangumi.moe/download/torrent/6aa530dc9605d5c6903133a3/name.torrent"
+        assertTrue(sourceKeyFor(nyaa).startsWith("h-"), sourceKeyFor(nyaa))
+        assertTrue(sourceKeyFor(bangumiMoe).startsWith("h-"), sourceKeyFor(bangumiMoe))
     }
 
     @Test
