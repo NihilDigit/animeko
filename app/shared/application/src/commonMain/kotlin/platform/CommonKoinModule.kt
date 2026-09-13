@@ -17,7 +17,10 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -81,7 +84,13 @@ import me.him188.ani.app.data.repository.subject.SubjectSearchRepository
 import me.him188.ani.app.data.repository.torrent.peer.PeerFilterSubscriptionRepository
 import me.him188.ani.app.data.repository.user.AccessTokenSession
 import me.him188.ani.app.data.repository.user.PreferencesRepositoryImpl
+import me.him188.ani.app.data.models.preference.PikPakConfig
 import me.him188.ani.app.data.repository.user.SettingsRepository
+import me.him188.ani.app.domain.torrent.TorrentEngineType
+import me.him188.ani.app.domain.torrent.engines.PikPakEngine
+import me.him188.ani.torrent.pikpak.PikPakCredentials
+import me.him188.ani.torrent.pikpak.PikPakSessionStoreAdapter
+import me.him188.ani.utils.io.inSystem
 import me.him188.ani.app.data.repository.user.TokenRepository
 import me.him188.ani.app.domain.danmaku.DanmakuRepository
 import me.him188.ani.app.domain.foundation.ConvertSendCountExceedExceptionFeature
@@ -118,8 +127,10 @@ import me.him188.ani.app.domain.mediasource.web.captcha.MacCmsImageCaptchaSolver
 import me.him188.ani.app.domain.mediasource.web.captcha.WebSessionManager
 import me.him188.ani.app.domain.mediasource.web.captcha.WebSourceCookieJar
 import me.him188.ani.app.domain.mediasource.web.captcha.WebSourceIdentityRegistry
+import me.him188.ani.app.domain.media.cache.PikPakWebM3uCacheMigration
 import me.him188.ani.app.domain.media.cache.engine.HttpMediaCacheEngine
 import me.him188.ani.app.domain.media.cache.engine.KtorPersistentHttpDownloader
+import me.him188.ani.app.domain.media.cache.engine.AlwaysUseTorrentEngineAccess
 import me.him188.ani.app.domain.media.cache.engine.MediaCacheEngineKey
 import me.him188.ani.app.domain.media.cache.engine.TorrentMediaCacheEngine
 import me.him188.ani.app.domain.media.cache.storage.HttpMediaCacheStorage
@@ -478,6 +489,43 @@ private fun KoinApplication.otherModules(getContext: () -> Context, coroutineSco
         )
     }
 
+    single<PikPakEngine> {
+        val settings = get<SettingsRepository>()
+
+        // Cache restoration reads isSupported synchronously; a default placeholder could discard valid records.
+        val savedConfig = runBlocking { settings.pikpakConfig.flow.first() }
+        val configState = settings.pikpakConfig.flow
+            .stateIn(coroutineScope, SharingStarted.Eagerly, savedConfig)
+        val credentials = configState
+            .map { cfg ->
+                if (cfg.enabled && cfg.username.isNotEmpty() &&
+                    (cfg.password.isNotEmpty() || cfg.refreshToken.isNotEmpty())
+                ) {
+                    PikPakCredentials(cfg.username, cfg.password)
+                } else null
+            }
+            .stateIn(coroutineScope, SharingStarted.Eagerly, initialValue = null)
+
+        PikPakEngine(
+            config = configState,
+            credentials = credentials,
+            sessionStore = PikPakSessionStoreAdapter(
+                readRefreshToken = { account ->
+                    configState.value.takeIf { it.username == account }?.refreshToken.orEmpty()
+                },
+                // A request started before an account switch must not replace the new account's token.
+                writeRefreshToken = { account, rt ->
+                    settings.pikpakConfig.update {
+                        if (username == account) copy(refreshToken = rt) else this
+                    }
+                },
+            ),
+            client = get<HttpClientProvider>().get(ScopedHttpClientUserAgent.NONE),
+            saveDir = Path(get<MediaSaveDirProvider>().saveDir, TorrentEngineType.PikPak.id).inSystem,
+            parentCoroutineContext = coroutineScope.coroutineContext,
+        )
+    }
+
     // Media
     single {
         DownloadOperations(
@@ -507,6 +555,7 @@ private fun KoinApplication.otherModules(getContext: () -> Context, coroutineSco
                     )
                 }*/
                 for (engine in engines) {
+                    val isPikPak = engine.type == TorrentEngineType.PikPak
                     add(
                         @Suppress("DEPRECATION")
                         TorrentMediaCacheStorage(
@@ -516,14 +565,16 @@ private fun KoinApplication.otherModules(getContext: () -> Context, coroutineSco
                                 mediaSourceId = id,
                                 engineKey = MediaCacheEngineKey(engine.type.id),
                                 torrentEngine = engine,
-                                engineAccess = get(),
+                                // PikPak runs in-process and must not start Android's BT foreground service.
+                                engineAccess = if (isPikPak) AlwaysUseTorrentEngineAccess else get(),
                                 dao = database.torrentCacheInfoDao(),
                                 baseSaveDirProvider = get(),
+                                fullDownloadForAutoCaches = !isPikPak,
                             ),
                             displayName = "LocalTorrent",
                             parentCoroutineContext = coroutineScope.childScopeContext(),
-                            shareRatioLimitFlow = settingsRepository.anitorrentConfig.flow
-                                .map { it.shareRatioLimit },
+                            shareRatioLimitFlow = if (isPikPak) flowOf(0f)
+                            else settingsRepository.anitorrentConfig.flow.map { it.shareRatioLimit },
                         ),
                     )
                 }
@@ -596,6 +647,17 @@ fun KoinApplication.startCommonKoinModule(
 
     coroutineScope.launch {
         koin.get<HttpDownloader>().init() // restore http download states first
+
+        // Migration changes engine ownership and must finish before cache restoration dispatches records.
+        PikPakWebM3uCacheMigration(
+            metadataStore = context.dataStores.mediaCacheMetadataStore,
+            httpDao = koin.get<AniDatabase>().httpCacheDownloadStateDao(),
+            torrentDao = koin.get<AniDatabase>().torrentCacheInfoDao(),
+            baseSaveDirProvider = koin.get(),
+            pikpakSaveDir = koin.get<PikPakEngine>().saveDir,
+        ).migrate()
+
+        koin.get<PikPakEngine>().sweepLeftoversOnStartup()
         val manager = koin.get<MediaDownloadManager>()
         for (storage in manager.storages) {
             storage.restorePersistedCaches()
