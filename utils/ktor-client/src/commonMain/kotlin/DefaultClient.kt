@@ -46,6 +46,7 @@ expect fun getPlatformKtorEngine(): HttpClientEngineFactory<*>
  * Note: 尽可能使用 `HttpClientProvider` 来共享 [HttpClient] 实例. 因为每个实例都潜在地会有一个线程池.
  */
 fun createDefaultHttpClient(
+    installBrowserUserAgent: Boolean = true,
     clientConfig: HttpClientConfig<*>.() -> Unit = {},
 ): HttpClient = HttpClient(getPlatformKtorEngine()) {
     install(HttpRequestRetry) {
@@ -62,7 +63,9 @@ fun createDefaultHttpClient(
         connectTimeoutMillis = 30_000
         socketTimeoutMillis = 30_000
     }
-    BrowserUserAgent()
+    if (installBrowserUserAgent) {
+        BrowserUserAgent()
+    }
     install(ContentNegotiation) {
         val xmlConverter = getXmlConverter()
         json(
