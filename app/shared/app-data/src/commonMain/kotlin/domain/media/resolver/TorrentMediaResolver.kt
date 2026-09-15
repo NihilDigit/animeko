@@ -15,8 +15,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.io.IOException
 import me.him188.ani.app.domain.media.cache.engine.EnsureTorrentEngineIsAccessible
+import me.him188.ani.app.domain.media.cache.engine.MediaCacheEngineKey
 import me.him188.ani.app.domain.media.cache.engine.TorrentEngineAccess
 import me.him188.ani.app.domain.media.cache.engine.UnsafeTorrentEngineAccessApi
 import me.him188.ani.app.domain.media.cache.engine.withServiceRequest
@@ -24,8 +26,11 @@ import me.him188.ani.app.domain.media.player.data.MediaDataProvider
 import me.him188.ani.app.domain.media.player.data.TorrentMediaData
 import me.him188.ani.app.domain.torrent.TorrentEngine
 import me.him188.ani.app.torrent.api.FetchTorrentTimeoutException
+import me.him188.ani.app.torrent.api.TorrentSession
 import me.him188.ani.app.torrent.api.files.EncodedTorrentInfo
 import me.him188.ani.app.torrent.api.files.FilePriority
+import me.him188.ani.torrent.pikpak.CloudReadiness
+import me.him188.ani.torrent.pikpak.PartialListing
 import me.him188.ani.datasources.api.EpisodeSort
 import me.him188.ani.datasources.api.Media
 import me.him188.ani.datasources.api.topic.ResourceLocation
@@ -35,11 +40,19 @@ import me.him188.ani.datasources.api.topic.titles.parse
 import me.him188.ani.utils.coroutines.IO_
 import me.him188.ani.utils.logging.info
 import me.him188.ani.utils.logging.logger
+import me.him188.ani.utils.logging.warn
+import org.openani.mediamp.source.MediaData
+import org.openani.mediamp.source.MediaExtraFiles
 import kotlin.coroutines.cancellation.CancellationException
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
 
+// Resolver chains choose by supports(), not by success. Cloud failures need an explicit BT fallback.
 class TorrentMediaResolver(
     private val engine: TorrentEngine,
     private val engineAccess: TorrentEngineAccess,
+    private val fallback: MediaResolver? = null,
+    private val cloudReadyTimeout: Duration = CLOUD_READY_TIMEOUT,
 ) : MediaResolver {
     override fun supports(media: Media): Boolean {
         if (!engine.isSupported) return false
@@ -55,6 +68,7 @@ class TorrentMediaResolver(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
+                resolveWithFallback(media, episode, e)?.let { return it }
                 throw MediaResolutionException(ResolutionFailures.ENGINE_ERROR, e)
             }
 
@@ -69,15 +83,24 @@ class TorrentMediaResolver(
                             encodedTorrentInfo = downloader.fetchTorrent(location.uri),
                             episodeMetadata = episode,
                             extraFiles = media.extraFiles.toMediampMediaExtraFiles(),
+                            fallback = fallback?.takeIf { it.supports(media) }?.let {
+                                suspend { it.resolve(media, episode) }
+                            },
+                            cloudReadyTimeout = cloudReadyTimeout,
                         )
-                    } catch (e: FetchTorrentTimeoutException) {
-                        throw MediaResolutionException(ResolutionFailures.FETCH_TIMEOUT)
                     } catch (e: CancellationException) {
                         throw e
-                    } catch (e: IOException) {
-                        throw MediaResolutionException(ResolutionFailures.NETWORK_ERROR, e)
                     } catch (e: Exception) {
-                        throw MediaResolutionException(ResolutionFailures.ENGINE_ERROR, e)
+                        resolveWithFallback(media, episode, e)?.let { return it }
+                        throw when (e) {
+                            is FetchTorrentTimeoutException ->
+                                MediaResolutionException(ResolutionFailures.FETCH_TIMEOUT)
+
+                            is IOException ->
+                                MediaResolutionException(ResolutionFailures.NETWORK_ERROR, e)
+
+                            else -> MediaResolutionException(ResolutionFailures.ENGINE_ERROR, e)
+                        }
                     }
                 }
 
@@ -86,7 +109,20 @@ class TorrentMediaResolver(
         }
     }
 
+    private suspend fun resolveWithFallback(
+        media: Media,
+        episode: EpisodeMetadata,
+        cause: Throwable,
+    ): MediaDataProvider<*>? {
+        val fallback = fallback ?: return null
+        if (!fallback.supports(media)) return null
+        logger.warn(cause) { "${engine.type} failed to resolve $media, falling back to $fallback" }
+        return fallback.resolve(media, episode)
+    }
+
     companion object {
+        private val logger = logger<TorrentMediaResolver>()
+
         private val DEFAULT_VIDEO_EXTENSIONS =
             setOf("mp4", "mkv", "avi", "mpeg", "mov", "flv", "wmv", "webm", "rm", "rmvb")
 
@@ -122,6 +158,7 @@ class TorrentMediaResolver(
             episodeSort: EpisodeSort,
             episodeEp: EpisodeSort?,
             videoExtensions: Set<String> = DEFAULT_VIDEO_EXTENSIONS,
+            listingComplete: Boolean = true,
         ): T? {
             // Filter by file extension
             val videos = entries
@@ -182,10 +219,21 @@ class TorrentMediaResolver(
                     ?.let { return it }
             }
 
+            // A lone imported episode is not evidence that the torrent contains only that episode.
+            if (!listingComplete) return null
             return videos.firstOrNull()
         }
     }
 }
+
+class IncompleteFileListingException(message: String) : Exception(message)
+
+class CloudNotReadyException(message: String) : Exception(message)
+
+// Long enough to cover a cold start that works (a sign-in, the file object, the variant and the
+// signed link take about two seconds), short enough that a network which cannot reach the cloud
+// sends playback to the local BT engine instead of a spinner.
+private val CLOUD_READY_TIMEOUT = 15.seconds
 
 /**
  * Marker for [MediaDataProvider]s backed by a local BitTorrent engine.
@@ -197,15 +245,17 @@ class TorrentMediaDataProvider(
     private val engineAccess: TorrentEngineAccess,
     private val encodedTorrentInfo: EncodedTorrentInfo,
     private val episodeMetadata: EpisodeMetadata,
-    override val extraFiles: org.openani.mediamp.source.MediaExtraFiles,
-) : MediaDataProvider<TorrentMediaData>, TorrentBackedMediaDataProvider {
+    override val extraFiles: MediaExtraFiles,
+    private val fallback: (suspend () -> MediaDataProvider<*>)? = null,
+    private val cloudReadyTimeout: Duration = CLOUD_READY_TIMEOUT,
+) : MediaDataProvider<MediaData>, TorrentBackedMediaDataProvider {
     @OptIn(ExperimentalStdlibApi::class)
     val uri: String by lazy {
         "torrent://${encodedTorrentInfo.data.toHexString().take(32) + "..."}"
     }
 
     @Throws(MediaSourceOpenException::class, CancellationException::class)
-    override suspend fun open(scopeForCleanup: CoroutineScope): TorrentMediaData {
+    override suspend fun open(scopeForCleanup: CoroutineScope): MediaData {
         // 注意, 这个函数须支持 cancellation. 它会在任意时刻被取消.
 
         logger.info {
@@ -218,45 +268,94 @@ class TorrentMediaDataProvider(
         @OptIn(UnsafeTorrentEngineAccessApi::class)
         engineAccess.requestService(requestToken, true)
 
+        var torrentSession: TorrentSession? = null
         val handle = try {
             val downloader = engine.getDownloader()
             withContext(Dispatchers.IO_) {
                 logger.info {
                     "TorrentVideoSource '${episodeMetadata.title}' waiting for files"
                 }
-                val files = downloader.startDownload(encodedTorrentInfo)
-                    .getFiles()
+                val session = downloader.startDownload(encodedTorrentInfo)
+                torrentSession = session
+                val files = session.getFiles()
 
-                TorrentMediaResolver.selectVideoFileEntry(
+                val listingComplete = (session as? PartialListing)?.listingComplete ?: true
+                val selected = TorrentMediaResolver.selectVideoFileEntry(
                     files,
                     { fileName },
                     listOf(episodeMetadata.title),
                     episodeSort = episodeMetadata.sort,
                     episodeEp = episodeMetadata.ep,
-                )?.also {
+                    listingComplete = listingComplete,
+                )
+                selected?.also {
                     logger.info {
                         "TorrentVideoSource selected file: ${it.fileName}"
                     }
-                }?.createHandle()?.also {
-                    it.resume(FilePriority.HIGH)
-                } ?: throw MediaSourceOpenException(
-                    OpenFailures.NO_MATCHING_FILE,
-                    """
+                }?.createHandle()?.also { handle ->
+                    handle.resume(FilePriority.HIGH)
+
+                    try {
+                        // The cloud path retries inside the SDK, so a broken network never surfaces
+                        // an error here and the fallback below stays unreachable while the player
+                        // shows a spinner. withTimeoutOrNull, not withTimeout: the latter throws a
+                        // CancellationException, which the catch below rethrows past the fallback.
+                        val ready = withTimeoutOrNull(cloudReadyTimeout) {
+                            (selected as? CloudReadiness)?.ensureCloudReady()
+                            true
+                        }
+                        // Not a MediaSourceOpenException either, for the same reason.
+                        if (ready == null) {
+                            throw CloudNotReadyException(
+                                "${engine.type} did not settle ${selected.fileName} within $cloudReadyTimeout",
+                            )
+                        }
+                    } catch (e: Throwable) {
+                        handle.close()
+                        throw e
+                    }
+                } ?: run {
+                    val diagnosis = """
                                 Torrent files: ${files.joinToString { it.fileName }}
                                 Episode metadata: $episodeMetadata
-                            """.trimIndent(),
-                )
+                            """.trimIndent()
+
+                    if (listingComplete) {
+                        throw MediaSourceOpenException(OpenFailures.NO_MATCHING_FILE, diagnosis)
+                    }
+                    throw IncompleteFileListingException("${engine.type} lists only part of the torrent. $diagnosis")
+                }
             }
         } catch (ex: Exception) {
             // 如果上面发生了异常或被取消, 下面的 onClose 就永远不会被调用, 需要手动释放.
             @OptIn(UnsafeTorrentEngineAccessApi::class)
             engineAccess.requestService(requestToken, false)
 
-            throw ex // just re-throw it
+            if (ex is CancellationException || ex is MediaSourceOpenException) throw ex
+            val fallback = this.fallback ?: throw when (ex) {
+                is IncompleteFileListingException ->
+                    MediaSourceOpenException(OpenFailures.NO_MATCHING_FILE, ex.message.orEmpty(), ex)
+
+                else -> ex
+            }
+            logger.warn(ex) { "${engine.type} failed to open '${episodeMetadata.title}', falling back" }
+            // No handle was created here, so nothing downstream would ever close this session.
+            torrentSession?.let { session ->
+                try {
+                    session.closeIfNotInUse()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Throwable) {
+                    logger.warn(e) { "Failed to close ${engine.type} session before falling back" }
+                }
+            }
+            return fallback().open(scopeForCleanup)
         }
 
         return TorrentMediaData(
             handle,
+            engineKey = MediaCacheEngineKey(engine.type.id),
+            session = torrentSession,
             onClose = {
                 logger.info {
                     "TorrentVideoSource '${episodeMetadata.title}' closing"

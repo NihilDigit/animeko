@@ -10,6 +10,7 @@
 package me.him188.ani.app.domain.player
 
 import androidx.compose.runtime.Immutable
+import me.him188.ani.app.domain.media.cache.engine.MediaCacheEngineKey
 import me.him188.ani.app.domain.media.resolver.MediaResolver
 import me.him188.ani.app.domain.media.selector.MediaSelector
 import me.him188.ani.datasources.api.Media
@@ -41,6 +42,7 @@ sealed interface VideoLoadingState {
      */
     data class Succeed(
         val isBt: Boolean,
+        val engineKey: MediaCacheEngineKey? = null,
     ) : VideoLoadingState, Progressing
 
     sealed class Failed : VideoLoadingState
