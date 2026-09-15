@@ -207,6 +207,7 @@ class CachedMedia(
 data class MediaCacheProperties(
     val totalSegments: Int? = null,
     val httpDownloaderStatus: String? = null,
+    val pathInTorrent: String? = null,
 )
 
 /**
@@ -345,3 +346,6 @@ enum class SubtitleKind {
 fun Media.isLocalCache(): Boolean {
     return kind == MediaSourceKind.LocalCache
 }
+
+val Media.originalMediaSourceId: String
+    get() = (this as? CachedMedia)?.origin?.mediaSourceId ?: mediaSourceId

@@ -26,6 +26,7 @@ import me.him188.ani.app.domain.media.selector.MaybeExcludedMedia
 import me.him188.ani.app.domain.media.selector.MediaSelector
 import me.him188.ani.app.domain.media.selector.UnsafeOriginalMediaAccess
 import me.him188.ani.app.domain.media.selector.isPerfectMatch
+import me.him188.ani.datasources.api.originalMediaSourceId
 import me.him188.ani.datasources.api.source.MediaSourceInfo
 import me.him188.ani.datasources.api.source.MediaSourceKind
 import me.him188.ani.utils.platform.collections.tupleOf
@@ -80,11 +81,11 @@ class MediaSelectorSummaryStateProducer(
                 when {
                     selected != null -> {
                         MediaSelectorSummary.Selected(
-                            mediaSourceInstances.find { it.mediaSourceId == selected.original.mediaSourceId }
+                            mediaSourceInstances.find { it.mediaSourceId == selected.original.originalMediaSourceId }
                                 ?.info
                                 ?.toSummary()
                                 ?: MediaSelectorSourceSummary(
-                                    sourceName = selected.original.mediaSourceId,
+                                    sourceName = selected.original.originalMediaSourceId,
                                     sourceIconUrl = "",
                                 ),
                             selected.original.originalTitle,

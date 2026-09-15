@@ -16,6 +16,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.buffer
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.produceIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.selects.select
@@ -43,7 +44,9 @@ class TorrentMediaCacheStorage(
     private val shareRatioLimitFlow: Flow<Float>,
     private val displayName: String,
     parentCoroutineContext: CoroutineContext = EmptyCoroutineContext,
-) : AbstractDataStoreMediaCacheStorage(mediaSourceId, store, torrentEngine, displayName, parentCoroutineContext) {
+) : AbstractDataStoreMediaCacheStorage(
+    mediaSourceId, store, torrentEngine, displayName, parentCoroutineContext,
+) {
     private val statSubscriptionScope = RestartableCoroutineScope(scope.coroutineContext)
 
     /**
@@ -56,9 +59,14 @@ class TorrentMediaCacheStorage(
      */
     private val requestStartupRestore = Channel<Unit>(Channel.CONFLATED)
 
+    private val startupRestored = CompletableDeferred<Unit>()
+
     init {
+        torrentEngine.remainingRecordsOfMedia = { mediaId ->
+            listFlow.value.filter { it.origin.mediaId == mediaId }.map { it.metadata }
+        }
+
         scope.launch(start = CoroutineStart.UNDISPATCHED) {
-            val startupRestored = CompletableDeferred<Unit>()
             val serviceConnected = torrentEngine.isServiceConnected.buffer(Channel.RENDEZVOUS).produceIn(this)
 
             while (true) {
@@ -95,17 +103,34 @@ class TorrentMediaCacheStorage(
         }
     }
 
+    /**
+     * The torrent row describes the whole torrent, so it may only fill in a record that is the media's
+     * only one. A season pack's other episodes keep their own (empty) completion state and restore
+     * through the engine.
+     */
+    private suspend fun backfillLegacyMetadata(origin: Media, metadata: MediaCacheMetadata): MediaCacheMetadata {
+        if (metadata.pathInTorrent != null) return metadata
+        val recordCount = metadataFlow.first().count { it.origin.mediaId == origin.mediaId }
+        if (recordCount != 1) return metadata
+        return torrentEngine.backfillFromTorrentRow(origin.mediaId, metadata)
+    }
+
     override suspend fun restoreFile(
         origin: Media,
         metadata: MediaCacheMetadata,
         reportRecovered: suspend (MediaCache) -> Unit,
     ): MediaCache? = withContext(Dispatchers.IO_) {
         try {
-            val cache = super.restoreFile(origin, metadata, reportRecovered)
+            val upgraded = backfillLegacyMetadata(origin, metadata)
+            val cache = super.restoreFile(origin, upgraded, reportRecovered)
+            if (cache != null && upgraded != metadata) {
+                persistMetadata(cache, upgraded)
+            }
 
             when (cache) {
                 is TorrentMediaCacheEngine.TorrentMediaCache -> {
                     logger.info { "Cache resumed: $cache, subscribe to media cache stats." }
+                    cache.onMetadataUpdated = { persistMetadata(cache, it) }
                     statSubscriptionScope.launch {
                         cache.subscribeStats(shareRatioLimitFlow)
                     }
@@ -136,6 +161,7 @@ class TorrentMediaCacheStorage(
             check(cache is TorrentMediaCacheEngine.TorrentMediaCache) { "Cache does not implement TorrentMediaCache." }
 
             if (existing == null) {
+                cache.onMetadataUpdated = { persistMetadata(cache, it) }
                 statSubscriptionScope.launch {
                     cache.subscribeStats(shareRatioLimitFlow)
                 }

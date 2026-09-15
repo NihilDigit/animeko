@@ -69,6 +69,7 @@ import me.him188.ani.app.ui.media.renderSubtitleLanguage
 import me.him188.ani.app.ui.settings.rendering.MediaSourceIcon
 import me.him188.ani.app.ui.settings.rendering.MediaSourceIcons
 import me.him188.ani.datasources.api.Media
+import me.him188.ani.datasources.api.originalMediaSourceId
 import me.him188.ani.datasources.api.topic.FileSize
 import me.him188.ani.datasources.api.topic.ResourceLocation
 import org.jetbrains.compose.resources.getString
@@ -305,7 +306,7 @@ private fun ExposedMediaSourceMenu(
     val unknownText = stringResource(Lang.cache_unknown)
     ExposedDropdownMenuBox(showMenu, { showMenu = it }, modifier) {
         val currentItem = groupState.selectedItem ?: group.first.original
-        val currentSourceInfo by mediaSourceInfoProvider.rememberMediaSourceInfo(currentItem.mediaSourceId)
+        val currentSourceInfo by mediaSourceInfoProvider.rememberMediaSourceInfo(currentItem.originalMediaSourceId)
         TextField(
             value = currentSourceInfo?.displayName ?: unknownText,
             onValueChange = {},
@@ -337,7 +338,7 @@ private fun ExposedMediaSourceMenu(
         ExposedDropdownMenu(showMenu, { showMenu = false }) {
             for (maybeExcluded in group.list) {
                 val item = maybeExcluded.original
-                val sourceInfo by mediaSourceInfoProvider.rememberMediaSourceInfo(item.mediaSourceId)
+                val sourceInfo by mediaSourceInfoProvider.rememberMediaSourceInfo(item.originalMediaSourceId)
                 DropdownMenuItem(
                     text = { Text(sourceInfo?.displayName ?: unknownText) },
                     leadingIcon = { MediaSourceIcon(sourceInfo, Modifier.size(24.dp)) },

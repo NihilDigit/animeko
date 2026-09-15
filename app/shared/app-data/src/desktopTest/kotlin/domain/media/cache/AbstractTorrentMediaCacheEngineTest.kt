@@ -47,7 +47,7 @@ abstract class AbstractTorrentMediaCacheEngineTest {
     }
 
     @TempDir
-    private lateinit var dir: File
+    protected lateinit var dir: File
     protected val torrentInfoDatabase = createMemoryTorrentCacheInfoDao()
 
     protected lateinit var cacheEngine: TorrentMediaCacheEngine
@@ -87,6 +87,7 @@ abstract class AbstractTorrentMediaCacheEngineTest {
 
     protected fun TestScope.createEngine(
         engine: TorrentEngine = createTestAnitorrentEngine(coroutineContext),
+        fullDownloadForAutoCaches: Boolean = true,
         onDownloadStarted: suspend (session: AnitorrentDownloadSession) -> Unit = {},
     ): TorrentMediaCacheEngine {
         this.coroutineContext.job.invokeOnCompletion {
@@ -102,6 +103,7 @@ abstract class AbstractTorrentMediaCacheEngineTest {
             baseSaveDirProvider = object : MediaSaveDirProvider {
                 override val saveDir: String = dir.absolutePath
             },
+            fullDownloadForAutoCaches = fullDownloadForAutoCaches,
             onDownloadStarted = { onDownloadStarted(it as AnitorrentDownloadSession) },
         ).also { cacheEngine = it }
     }
