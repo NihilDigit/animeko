@@ -405,6 +405,39 @@ class CacheOnBtPlayExtensionTest : AbstractPlayerExtensionTest() {
     }
 
     @Test
+    fun allUnstartedAutoCachesAreDeletedAfterSwitchingSources() = runTest {
+        val results = CompletableDeferred<List<Media>>()
+        val context = createCase(
+            resolver = ConfigurableResolver { FakeTorrentBackedMediaDataProvider(engineKey = MediaCacheEngineKey.PikPak) },
+            engineKey = MediaCacheEngineKey.PikPak,
+        ) { _, builder ->
+            builder.mediaSources.add(
+                createTestMediaSourceInstance(
+                    TestHttpMediaSource("bt", kind = MediaSourceKind.BitTorrent, fetch = {
+                        SinglePagePagedSource { results.await().map { MediaMatch(it, MatchKind.EXACT) }.asFlow() }
+                    }),
+                ),
+            )
+        }
+        val (scope, suite, state, storage) = context
+        startFetcher(state, scope)
+        val first = suite.mediaSelectorTestBuilder.createMedia("bt", kind = MediaSourceKind.BitTorrent)
+        val second = first.copy(mediaId = "bt.2", download = ResourceLocation.MagnetLink("magnet:?xt=urn:btih:2"))
+        results.complete(listOf(first, second))
+        val selector = state.mediaSelectorFlow.filterNotNull().first()
+        selector.select(first)
+        advanceUntilIdle()
+        selector.select(second)
+        advanceUntilIdle()
+        assertEquals(2, storage.listFlow.value.size)
+
+        state.switchEpisode(1000)
+        advanceUntilIdle()
+        assertEquals(0, storage.listFlow.value.size)
+        scope.cancel()
+    }
+
+    @Test
     fun keepCacheWhenProgress() = runTest {
         val bt = CompletableDeferred<List<Media>>()
         val web = CompletableDeferred<List<Media>>()

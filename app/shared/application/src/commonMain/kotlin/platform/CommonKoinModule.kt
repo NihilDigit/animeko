@@ -505,7 +505,13 @@ private fun KoinApplication.otherModules(getContext: () -> Context, coroutineSco
                     PikPakCredentials(cfg.username, cfg.password)
                 } else null
             }
-            .stateIn(coroutineScope, SharingStarted.Eagerly, initialValue = null)
+            .stateIn(
+                coroutineScope, SharingStarted.Eagerly,
+                initialValue = savedConfig.takeIf {
+                    it.enabled && it.username.isNotEmpty() &&
+                            (it.password.isNotEmpty() || it.refreshToken.isNotEmpty())
+                }?.let { PikPakCredentials(it.username, it.password) },
+            )
 
         PikPakEngine(
             config = configState,
@@ -575,6 +581,7 @@ private fun KoinApplication.otherModules(getContext: () -> Context, coroutineSco
                             ),
                             displayName = "LocalTorrent",
                             parentCoroutineContext = coroutineScope.childScopeContext(),
+                            engineAvailability = (engine as? PikPakEngine)?.availability ?: flowOf(true),
                             shareRatioLimitFlow = if (isPikPak) flowOf(0f)
                             else settingsRepository.anitorrentConfig.flow.map { it.shareRatioLimit },
                         ),
