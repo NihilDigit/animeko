@@ -73,6 +73,13 @@ internal class CloudFile(
         }
     }
 
+    // Survives the readers a signature refresh replaces, so the distribution is
+    // over the file and not over whichever reader happens to be current.
+    private val attemptLog = RangeAttemptLog(
+        name,
+        httpRetries = { handle?.first?.client?.httpRetries?.value },
+    ) { logger.info { it } }
+
     override suspend fun <T> read(
         start: Long,
         length: Long,
@@ -158,6 +165,7 @@ internal class CloudFile(
                     minted.value = true
                     discard(account, it)
                 },
+                onRangeAttempt = attemptLog::record,
             ).also {
                 val mark = TimeSource.Monotonic.markNow()
                 it.prewarm()

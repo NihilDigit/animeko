@@ -336,6 +336,9 @@ internal class PikPakFileEntry(
 
         // 预览取的是悬停位置的单帧, 一个连接够用. 预读窗口本来更该压 (SDK 默认 32 MiB 是为持续播放
         // 准备的), 但设它的构造在 SDK 里是 internal, 外面只能给并发数.
+        // 压窗口试过一次, 回退了: 预览帧要从它前面那个关键帧开始解, 这个码率下一个关键帧间隔就是几 MB,
+        // 512 KiB 的窗口把每次悬停变成了单连接上按块前挪, 实测一次读 19.9 秒且预览始终没出来. 要再压,
+        // 得按关键帧间隔取值, 不是按块数.
         const val SECONDARY_CONCURRENCY = 1
 
         const val HEADER_SIZE: Long = 2L * 1024 * 1024

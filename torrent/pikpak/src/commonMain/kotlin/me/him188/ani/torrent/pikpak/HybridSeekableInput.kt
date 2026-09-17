@@ -358,7 +358,13 @@ internal class StreamSeekableInput(
     private var closed = false
 
     private val throughput = ThroughputLog { bytes, reads, elapsed ->
-        logger.info { "[$name] $bytes B over $reads reads in $elapsed, ${kilobytesPerSecond(bytes, elapsed)} kB/s" }
+        // `wasted` is cumulative for this reader, not per window: it only moves when the cache
+        // evicts a block nobody read, which happens in bursts long after the fetch that caused it.
+        // A window's worth of it would read as noise.
+        logger.info {
+            "[$name] $bytes B over $reads reads in $elapsed, ${kilobytesPerSecond(bytes, elapsed)} kB/s" +
+                    ", wasted ${reader.wastedBytes / 1024} KiB"
+        }
     }
 
     override val size: Long get() = reader.size
@@ -386,6 +392,12 @@ internal class StreamSeekableInput(
         }
         if (awaitingFirstByte) {
             awaitingFirstByte = false
+            // What a viewer feels after a seek, timed in the SDK from the seek to the byte it
+            // served. It has to come from there: a UI probe samples the screen every three seconds,
+            // which is the same order as the thing being measured, and a harness that polled for a
+            // buffering indicator reported a flat twenty-two seconds for seeks that never buffered
+            // at all.
+            reader.lastSeekLatency?.let { logger.info { "[$name] seek to ${reader.position} served after $it" } }
             throughput.restart()
         }
         if (read > 0) throughput.record(read.toLong())

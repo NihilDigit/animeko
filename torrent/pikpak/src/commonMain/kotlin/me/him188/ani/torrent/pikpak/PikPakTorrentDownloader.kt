@@ -80,15 +80,22 @@ class PikPakTorrentDownloader(
     // newer than the sweep's cutoff. Deliberately parentless, so cancelling scope cannot reach it.
     private val cleanupScope = CoroutineScope(parentCoroutineContext.minusKey(Job) + SupervisorJob())
 
-    // The SDK allows a minute of silence on a CDN read, which suits a background download and not a
-    // player: a single connection going quiet stalled playback for 21 seconds while seven others
-    // were moving 7 MB/s, so the block the demuxer needed was the only thing missing. Three seconds
-    // of no bytes at all means that connection is gone; re-issuing the range costs one round trip.
+    // A player needs a connection that has gone quiet to be re-issued quickly: one going silent
+    // stalled playback for 21 seconds while seven others were moving 7 MB/s, so the block the
+    // demuxer needed was the only thing missing. That used to be three seconds on socketTimeout,
+    // which was the wrong knob -- it times every socket read, including the one waiting for the
+    // response headers, and a CDN that has not answered yet is not a connection that has died. On a
+    // weak link it killed requests still waiting for headers; each retried twice underneath and
+    // burned ten to twelve seconds having delivered nothing, and the reader's own retry on top of
+    // that is how a slow answer became a thirty-three second freeze.
+    //
+    // The three seconds now live in RangeReader, which watches the body alone because it is the
+    // only place that knows when the headers arrived. What is left here is a backstop.
     // config() keeps the tuned connection pool and replaces only the timeouts.
     private val cdnClientHolder = lazy {
         PikPakClient.tunedCdnClient().config {
             install(HttpTimeout) {
-                socketTimeoutMillis = CDN_SILENCE_TIMEOUT.inWholeMilliseconds
+                socketTimeoutMillis = CDN_SOCKET_TIMEOUT.inWholeMilliseconds
                 // A range request is free to take as long as it needs while bytes keep arriving.
                 requestTimeoutMillis = Long.MAX_VALUE
             }
@@ -102,6 +109,7 @@ class PikPakTorrentDownloader(
 
     private val sessionLock = Mutex()
     private val sessions = mutableMapOf<String, Deferred<PikPakSession>>()
+
 
     private val resolvedMagnetsLock = Mutex()
     private val resolvedMagnets = mutableMapOf<String, ResolvedMagnet>()
@@ -508,9 +516,13 @@ class PikPakTorrentDownloader(
     }
 
     private companion object {
-        const val SDK_VERSION = "0.6.5"
+        const val SDK_VERSION = "0.6.6"
 
-        val CDN_SILENCE_TIMEOUT = 3.seconds
+        // A backstop, not the body watchdog -- RangeReader owns that now. It has to clear the
+        // wait for the response headers, which is a different quantity: 410 ms at the median on
+        // this link, but seconds when eight TLS handshakes are landing at once, and a handshake
+        // here costs 923 ms of which almost all is TLS.
+        val CDN_SOCKET_TIMEOUT = 20.seconds
 
         // Long enough to cover a canServe followed by the download it decides, short enough that a
         // torrent PikPak has since dropped is not answered for from memory.
