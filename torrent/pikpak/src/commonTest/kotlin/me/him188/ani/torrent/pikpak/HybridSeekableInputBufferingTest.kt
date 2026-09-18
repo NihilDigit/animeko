@@ -13,6 +13,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.io.IOException
 import me.him188.ani.app.torrent.api.pieces.MutablePieceList
 import me.him188.ani.app.torrent.api.pieces.PieceList
 import me.him188.ani.app.torrent.api.pieces.PieceState
@@ -25,6 +26,7 @@ import me.him188.ani.utils.io.resolve
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
@@ -202,6 +204,38 @@ class HybridSeekableInputBufferingTest {
 
     private suspend fun awaitTail(tail: TailPrefetch, from: Long, expected: Long) = withTimeout(10.seconds) {
         while (tail.availableFrom(from) < expected) delay(10.milliseconds)
+    }
+
+    // The preview input is built with a stream factory that refuses; the data on disk must still be
+    // served, and a read past it must fail with the type the caller handles instead of hanging.
+    @Test
+    fun `an input whose stream refuses to open serves the disk and fails the rest`() {
+        val size = 8 * pieceSize
+        val content = ByteArray(size.toInt()) { (it * 19 % 251).toByte() }
+        val dir = SystemPaths.createTempDirectory("pikpak-buffered-local-only")
+        val dataPath = dir.resolve("video.mkv")
+        RandomAccessFile(dataPath, "rw").use { it.write(content, 0, content.size) }
+
+        val pieces = pieces(size)
+        finish(pieces, 0..3)
+        val input = HybridSeekableInput(
+            name = "local-only.mkv",
+            dataPath = dataPath,
+            pieces = pieces,
+            size = size,
+            openStream = { throw IOException("preview reads local data only") },
+            onDelivered = {},
+            onCloudReadStarted = {},
+            onCloudReadFinished = {},
+            bufferSize = pieceSize.toInt(),
+        )
+
+        val local = readOneByOne(input, (4 * pieceSize).toInt())
+        assertContentEquals(content.copyOfRange(0, (4 * pieceSize).toInt()), local)
+
+        input.seekTo(4 * pieceSize)
+        assertFailsWith<IOException> { input.read(ByteArray(1), 0, 1) }
+        input.close()
     }
 }
 

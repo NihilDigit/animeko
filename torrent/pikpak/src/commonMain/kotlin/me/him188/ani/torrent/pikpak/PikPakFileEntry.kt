@@ -29,6 +29,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.io.IOException
 import me.him188.ani.app.torrent.api.files.AbstractTorrentFileEntry
 import me.him188.ani.app.torrent.api.files.FilePriority
 import me.him188.ani.app.torrent.api.files.TorrentFileEntry
@@ -206,23 +207,27 @@ internal class PikPakFileEntry(
         withContext(Dispatchers.IO_) {
             ensureCloudReady()
             val current = stream
-            // 播放已经开着一个 input 时再来的是进度条预览: 它按悬停位置零星取几帧, 而 SDK 的读优先级由读的
-            // 种类决定, 外面传不进去, 能压住它的只有连接数和预读窗口. 让位的判据是"这个文件上已经有 input",
-            // 因为 createInput 拿不到调用方是谁.
+            // 播放已经开着一个 input 时再来的是进度条预览: 它按悬停位置零星取几帧. 预览只读盘上已有的
+            // 数据, 不开云端流: 悬停位置在云端文件上几乎从不在本地, 取一帧就是一次冷往返, Android 上实测
+            // 一帧 2 到 37 秒, 始终是黑的; 而它读到的字节都在和播放抢连接槽, 弱网上实测预览以 2.2 MB/s
+            // 读了 11 MB, 同时播放读文件头每次等一秒. 缓存过的区域照常出预览, 其余位置空着.
+            // 判据是"这个文件上已经有 input", 因为 createInput 拿不到调用方是谁.
             val secondary = current.claimInput() > 0
             logger.info { "[$torrentId] $fileName creating ${if (secondary) "a secondary" else "an"} input" }
+            val inputName = if (secondary) "$fileName (preview)" else fileName
             HybridSeekableInput(
-                name = fileName,
+                name = inputName,
                 dataPath = dataPath,
                 pieces = current.pieces,
                 size = length,
                 openStream = {
+                    if (secondary) throw IOException("[$inputName] preview reads local data only")
                     StreamSeekableInput(
-                        name = fileName,
+                        name = inputName,
                         reader = PikPakStreamReader(
                             source = source,
                             size = length,
-                            concurrency = if (secondary) SECONDARY_CONCURRENCY else concurrency,
+                            concurrency = concurrency,
                             parentCoroutineContext = streamContext,
                         ),
                     )
@@ -334,13 +339,6 @@ internal class PikPakFileEntry(
         const val PREFETCH_TAIL = true
 
         const val PIECE_SIZE: Long = 512L * 1024
-
-        // 预览取的是悬停位置的单帧, 一个连接够用. 预读窗口本来更该压 (SDK 默认 32 MiB 是为持续播放
-        // 准备的), 但设它的构造在 SDK 里是 internal, 外面只能给并发数.
-        // 压窗口试过一次, 回退了: 预览帧要从它前面那个关键帧开始解, 这个码率下一个关键帧间隔就是几 MB,
-        // 512 KiB 的窗口把每次悬停变成了单连接上按块前挪, 实测一次读 19.9 秒且预览始终没出来. 要再压,
-        // 得按关键帧间隔取值, 不是按块数.
-        const val SECONDARY_CONCURRENCY = 1
 
         const val HEADER_SIZE: Long = 2L * 1024 * 1024
         const val FOOTER_SIZE: Long = 512L * 1024
