@@ -24,6 +24,7 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
@@ -65,6 +66,7 @@ import me.him188.ani.datasources.api.MediaCacheProperties
 import me.him188.ani.datasources.api.topic.FileSize
 import me.him188.ani.datasources.api.topic.FileSize.Companion.bytes
 import me.him188.ani.datasources.api.topic.ResourceLocation
+import me.him188.ani.torrent.pikpak.PartialListing
 import me.him188.ani.utils.coroutines.IO_
 import me.him188.ani.utils.io.SystemPath
 import me.him188.ani.utils.io.absolutePath
@@ -111,6 +113,8 @@ class TorrentMediaCacheEngine(
      * 同一 media 下还剩哪些记录, 否则会连带删掉其他集的 torrent_cache 行和文件.
      */
     internal val metadataStore: DataStore<List<MediaCacheSave>>,
+    // PikPak auto-cache records remember a playable selection without downloading the whole file.
+    private val fullDownloadForAutoCaches: Boolean = true,
     private val onDownloadStarted: suspend (session: TorrentSession) -> Unit = {},
 ) : MediaCacheEngine, AutoCloseable {
     companion object {
@@ -242,7 +246,18 @@ class TorrentMediaCacheEngine(
                 }
         }.flowOn(flowDispatcher)
 
-        override val downloaderStatus: Flow<DownloaderStatus?> =
+        private val downloadsFully: Flow<Boolean> =
+            metadataFlow.map { !it.autoCached || fullDownloadForAutoCaches }
+
+        override val followsPlaybackOnly: Flow<Boolean> = downloadsFully.map { !it }
+
+        override val downloaderStatus: Flow<DownloaderStatus?> = if (engineKey.isCloud) {
+            fileHandle.entry.flatMapLatest { entry ->
+                entry?.error ?: flowOf(null)
+            }.map { error ->
+                DownloaderStatus.Cloud(errorMessage = error?.let { it.message ?: it::class.simpleName })
+            }.flowOn(flowDispatcher)
+        } else {
             combine(isServiceConnected, fileHandle.state) { connected, handleState -> connected to handleState }
                 .flatMapLatest { (connected, handleState) ->
                     val startup = when {
@@ -275,13 +290,14 @@ class TorrentMediaCacheEngine(
                         logger.warn(e) { "Failed to query downloader status of ${origin.mediaId}" }
                     }
                 }.flowOn(flowDispatcher)
+        }
 
         override val state: Flow<MediaCacheState> =
-            combine(desiredState, fileHandle.state, fileStats) { currentState, handleState, stats ->
+            combine(desiredState, fileHandle.state, fileStats, downloadsFully) { currentState, handleState, stats, full ->
                 when {
                     handleState == null -> MediaCacheState.FAILED
                     stats.isDownloadFinished -> MediaCacheState.COMPLETED
-                    currentState == MediaCacheState.PAUSED -> MediaCacheState.PAUSED
+                    currentState == MediaCacheState.PAUSED || !full -> MediaCacheState.PAUSED
                     else -> MediaCacheState.IN_PROGRESS
                 }
             }.flowOn(flowDispatcher)
@@ -299,8 +315,12 @@ class TorrentMediaCacheEngine(
 
         override suspend fun resume() {
             if (isDeleted.value) return
-            val file = fileHandle.handle.first()
             desiredState.value = MediaCacheState.IN_PROGRESS
+            if (!downloadsFully.first()) {
+                logger.info { "Cache ${origin.mediaId} follows playback, not raising file priority." }
+                return
+            }
+            val file = fileHandle.handle.first()
             logger.info { "Resuming file: $file" }
             file?.resume(FilePriority.NORMAL)
         }
@@ -550,6 +570,7 @@ class TorrentMediaCacheEngine(
         .flowOn(flowDispatcher)
 
     override fun supports(media: Media): Boolean {
+        if (!torrentEngine.isSupported) return false
         return media.download is ResourceLocation.HttpTorrentFile
                 || media.download is ResourceLocation.MagnetLink
     }
@@ -685,6 +706,7 @@ class TorrentMediaCacheEngine(
                     listOf(metadata.episodeName),
                     episodeSort = metadata.episodeSort,
                     episodeEp = metadata.episodeEp,
+                    listingComplete = (session as? PartialListing)?.listingComplete ?: true,
                 )
 
             if (selectedFile == null) {
@@ -754,6 +776,10 @@ class TorrentMediaCacheEngine(
 
     @OptIn(ExperimentalStdlibApi::class)
     override suspend fun deleteUnusedCaches(all: List<MediaCache>) {
+        if (!withContext(Dispatchers.IO_) { torrentEngine.saveDir.exists() }) {
+            logger.debug { "$mediaSourceId: engine save dir does not exist, skipping cache pruning." }
+            return
+        }
         if (!torrentEngine.isSupported) {
             logger.debug { "$mediaSourceId: engine is not supported, skipping cache pruning." }
             return

@@ -13,9 +13,11 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.advanceUntilIdle
 import me.him188.ani.app.domain.media.cache.engine.TorrentMediaCacheEngine
 import me.him188.ani.app.domain.media.cache.storage.MediaCacheSave
 import me.him188.ani.app.domain.media.cache.storage.TorrentMediaCacheStorage
@@ -24,6 +26,8 @@ import me.him188.ani.app.domain.media.createTestMediaProperties
 import me.him188.ani.app.domain.media.resolver.EpisodeMetadata
 import me.him188.ani.app.domain.torrent.TorrentEngine
 import me.him188.ani.app.torrent.api.TorrentHandleState
+import me.him188.ani.app.torrent.api.files.AbstractTorrentFileEntry
+import me.him188.ani.app.torrent.api.files.FilePriority
 import me.him188.ani.datasources.api.DefaultMedia
 import me.him188.ani.datasources.api.EpisodeSort
 import me.him188.ani.datasources.api.MediaCacheMetadata
@@ -75,6 +79,85 @@ class TorrentMediaCacheStorageTest : AbstractTorrentMediaCacheEngineTest() {
         } finally {
             cleanup()
         }
+    }
+
+    @Test
+    fun `auto cache follows playback while full download is off`() = runTest {
+        val storage = createStorage(
+            createEngine(
+                fullDownloadForAutoCaches = false,
+                onDownloadStarted = { it.onTorrentChecked() },
+            ),
+        )
+
+        val cache = storage.cache(testMedia, mediaCacheMetadata(autoCached = true), resume = true)
+
+        assertEquals(FilePriority.IGNORE, cache.requestingPriority())
+    }
+
+    @Test
+    fun `explicit cache downloads fully while full download is off`() = runTest {
+        val storage = createStorage(
+            createEngine(
+                fullDownloadForAutoCaches = false,
+                onDownloadStarted = { it.onTorrentChecked() },
+            ),
+        )
+
+        val cache = storage.cache(testMedia, mediaCacheMetadata(autoCached = false), resume = true)
+
+        assertEquals(FilePriority.NORMAL, cache.requestingPriority())
+    }
+
+    @Test
+    fun `resumeByUser turns an auto cache into an explicit one`() = runTest {
+        val storage = createStorage(
+            createEngine(
+                fullDownloadForAutoCaches = false,
+                onDownloadStarted = { it.onTorrentChecked() },
+            ),
+        )
+
+        val cache = storage.cache(testMedia, mediaCacheMetadata(autoCached = true), resume = true)
+        assertEquals(FilePriority.IGNORE, cache.requestingPriority())
+
+        cache.resumeByUser()
+        advanceUntilIdle()
+        assertEquals(false, cache.metadata.autoCached)
+        assertEquals(FilePriority.NORMAL, cache.requestingPriority())
+
+        assertEquals(
+            false,
+            metadataFlow.first().single { it.origin.mediaId == cache.origin.mediaId }.metadata.autoCached,
+        )
+    }
+
+    @Test
+    fun `downloading a season promotes the record left by playback instead of adding one`() = runTest {
+        val storage = createStorage(
+            createEngine(
+                fullDownloadForAutoCaches = false,
+                onDownloadStarted = { it.onTorrentChecked() },
+            ),
+        )
+
+        // 播放第 1 集时跟随播放建立的记录.
+        val played = storage.cache(testMedia, mediaCacheMetadata(autoCached = true, episodeId = "1"), resume = true)
+        assertEquals(FilePriority.IGNORE, played.requestingPriority())
+
+        // 批量下载整季: 每集一次请求, 共用同一个合集 media, autoCached 为 false.
+        val ep1 = storage.cache(testMedia, mediaCacheMetadata(autoCached = false, episodeId = "1"), resume = true)
+        val ep2 = storage.cache(testMedia, mediaCacheMetadata(autoCached = false, episodeId = "2"), resume = true)
+        advanceUntilIdle()
+
+        assertSame(played, ep1)
+        assertEquals(listOf(ep1, ep2), storage.listFlow.first())
+
+        val saves = metadataFlow.first()
+        assertEquals(listOf("1", "2"), saves.map { it.metadata.episodeId }.sorted())
+        assertEquals(false, saves.single { it.metadata.episodeId == "1" }.metadata.autoCached)
+        assertEquals(false, ep1.metadata.autoCached)
+        assertEquals(FilePriority.NORMAL, ep1.requestingPriority())
     }
 
     @Test
@@ -189,6 +272,11 @@ class TorrentMediaCacheStorageTest : AbstractTorrentMediaCacheEngineTest() {
         override val isSupported: Boolean get() = false
     }
 
+    private suspend fun TorrentMediaCacheEngine.TorrentMediaCache.requestingPriority(): FilePriority {
+        val entry = assertNotNull(fileHandle.entry.first())
+        return (entry as AbstractTorrentFileEntry).requestingPriority
+    }
+
     private fun TestScope.createStorage(engine: TorrentMediaCacheEngine = createEngine()): TorrentMediaCacheStorage {
         return TorrentMediaCacheStorage(
             CACHE_MEDIA_SOURCE_ID,
@@ -202,7 +290,7 @@ class TorrentMediaCacheStorageTest : AbstractTorrentMediaCacheEngineTest() {
         }
     }
 
-    private fun mediaCacheMetadata(episodeId: String = "1") = MediaCacheMetadata(
+    private fun mediaCacheMetadata(autoCached: Boolean = false, episodeId: String = "1") = MediaCacheMetadata(
         subjectId = "1",
         episodeId = episodeId,
         subjectNameCN = "1",
@@ -210,6 +298,7 @@ class TorrentMediaCacheStorageTest : AbstractTorrentMediaCacheEngineTest() {
         episodeSort = EpisodeSort("02"),
         episodeEp = EpisodeSort("02"),
         episodeName = "测试剧集",
+        autoCached = autoCached,
     )
 
     ///////////////////////////////////////////////////////////////////////////
