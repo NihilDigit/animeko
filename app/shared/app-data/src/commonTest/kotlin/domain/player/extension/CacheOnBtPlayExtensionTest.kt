@@ -408,8 +408,7 @@ class CacheOnBtPlayExtensionTest : AbstractPlayerExtensionTest() {
     fun allUnstartedAutoCachesAreDeletedAfterSwitchingSources() = runTest {
         val results = CompletableDeferred<List<Media>>()
         val context = createCase(
-            resolver = ConfigurableResolver { FakeTorrentBackedMediaDataProvider(engineKey = MediaCacheEngineKey.PikPak) },
-            engineKey = MediaCacheEngineKey.PikPak,
+            resolver = ConfigurableResolver { FakeTorrentBackedMediaDataProvider() },
         ) { _, builder ->
             builder.mediaSources.add(
                 createTestMediaSourceInstance(
@@ -614,12 +613,15 @@ class CacheOnBtPlayExtensionTest : AbstractPlayerExtensionTest() {
         scope.cancel()
     }
 
+    /**
+     * 云盘引擎按需取流, 记录不会取任何数据; 留下它只会让它以「本地缓存」的身份赢下选源.
+     */
     @Test
-    fun autoCacheOnPikPak() = runTest {
+    fun noAutoCacheOnPikPak() = runTest {
         val (scope, storage) = runPikPakPlayback()
 
-        assertEquals(1, storage.cacheCalls)
-        assertEquals(storage.lastMetadata.autoCached, true)
+        assertEquals(0, storage.cacheCalls)
+        assertEquals(0, storage.listFlow.value.size)
         scope.cancel()
     }
 

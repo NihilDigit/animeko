@@ -76,6 +76,13 @@ class CacheOnBtPlayExtension(
                             logger.warn { "No cache storage supports $media, skipping auto cache." }
                             return@collectLatest
                         }
+                        if (storage.engine.engineKey.isCloud) {
+                            // A cloud record would fetch nothing: the stream is served on demand. It would
+                            // still count as a local cache in media selection and win over a real completed
+                            // download of the same episode from another torrent.
+                            logger.info { "Playback runs on ${storage.engine.engineKey}, no auto cache needed." }
+                            return@collectLatest
+                        }
                         logger.info { "Auto cache BitTorrent media on play with ${storage.engine.engineKey}: $media" }
 
                         val metadata = MediaCacheMetadata(request, autoCached = true)

@@ -99,44 +99,12 @@ class TorrentMediaCacheStorageTest : AbstractTorrentMediaCacheEngineTest() {
     }
 
     @Test
-    fun `auto cache follows playback while full download is off`() = runTest {
-        val storage = createStorage(
-            createEngine(
-                fullDownloadForAutoCaches = false,
-                onDownloadStarted = { it.onTorrentChecked() },
-            ),
-        )
-
-        val cache = storage.cache(testMedia, mediaCacheMetadata(autoCached = true), resume = true)
-
-        assertEquals(FilePriority.IGNORE, cache.requestingPriority())
-    }
-
-    @Test
-    fun `explicit cache downloads fully while full download is off`() = runTest {
-        val storage = createStorage(
-            createEngine(
-                fullDownloadForAutoCaches = false,
-                onDownloadStarted = { it.onTorrentChecked() },
-            ),
-        )
-
-        val cache = storage.cache(testMedia, mediaCacheMetadata(autoCached = false), resume = true)
-
-        assertEquals(FilePriority.NORMAL, cache.requestingPriority())
-    }
-
-    @Test
     fun `resumeByUser turns an auto cache into an explicit one`() = runTest {
         val storage = createStorage(
-            createEngine(
-                fullDownloadForAutoCaches = false,
-                onDownloadStarted = { it.onTorrentChecked() },
-            ),
+            createEngine(onDownloadStarted = { it.onTorrentChecked() }),
         )
 
         val cache = storage.cache(testMedia, mediaCacheMetadata(autoCached = true), resume = true)
-        assertEquals(FilePriority.IGNORE, cache.requestingPriority())
 
         cache.resumeByUser()
         advanceUntilIdle()
@@ -152,15 +120,11 @@ class TorrentMediaCacheStorageTest : AbstractTorrentMediaCacheEngineTest() {
     @Test
     fun `downloading a season promotes the record left by playback instead of adding one`() = runTest {
         val storage = createStorage(
-            createEngine(
-                fullDownloadForAutoCaches = false,
-                onDownloadStarted = { it.onTorrentChecked() },
-            ),
+            createEngine(onDownloadStarted = { it.onTorrentChecked() }),
         )
 
         // 播放第 1 集时跟随播放建立的记录.
         val played = storage.cache(testMedia, mediaCacheMetadata(autoCached = true, episodeId = "1"), resume = true)
-        assertEquals(FilePriority.IGNORE, played.requestingPriority())
 
         // 批量下载整季: 每集一次请求, 共用同一个合集 media, autoCached 为 false.
         val ep1 = storage.cache(testMedia, mediaCacheMetadata(autoCached = false, episodeId = "1"), resume = true)

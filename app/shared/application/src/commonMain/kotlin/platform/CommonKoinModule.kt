@@ -577,7 +577,6 @@ private fun KoinApplication.otherModules(getContext: () -> Context, coroutineSco
                                 dao = database.torrentCacheInfoDao(),
                                 baseSaveDirProvider = get(),
                                 metadataStore = metadataStore,
-                                fullDownloadForAutoCaches = !isPikPak,
                             ),
                             displayName = "LocalTorrent",
                             parentCoroutineContext = coroutineScope.childScopeContext(),

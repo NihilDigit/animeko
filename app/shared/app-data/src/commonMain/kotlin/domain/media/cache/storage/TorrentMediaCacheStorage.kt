@@ -193,8 +193,8 @@ class TorrentMediaCacheStorage(
             cache
         }.also {
             when {
-                // 普通 resume() 见记录仍标着 autoCached 会直接返回, 用户会看到添加成功却什么都没发生.
-                // 只有显式添加才转正, 启动恢复一类的 resume 不能把跟随播放的记录变成完整下载.
+                // 显式添加必须清掉 autoCached, 否则播放结束时这条记录会被当作自动记录一并删除,
+                // 用户看到添加成功而下载消失. 启动恢复一类的 resume 不走这条路.
                 promoting -> it.resumeByUser()
                 resume -> it.resume()
             }
