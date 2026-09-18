@@ -11,8 +11,10 @@ package me.him188.ani.torrent.pikpak
 
 import io.github.nihildigit.pikpak.RangeSource
 import io.ktor.utils.io.ByteReadChannel
+import kotlinx.atomicfu.atomic
 import kotlinx.atomicfu.locks.SynchronizedObject
 import kotlinx.atomicfu.locks.synchronized
+import kotlinx.atomicfu.update
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
@@ -217,5 +219,96 @@ class DownloadSchedulerTest {
         other.close()
         playingSlot.closeStream()
         assertTrue(other.isComplete)
+    }
+
+    // Holds each read long enough for the workers to pile up, and remembers how high the pile got.
+    private class ConcurrencyProbe(private val content: ByteArray) : RangeSource {
+        private val inFlight = atomic(0)
+        val peak = atomic(0)
+
+        override suspend fun <T> read(
+            start: Long,
+            length: Long,
+            priority: Int,
+            block: suspend (ByteReadChannel) -> T,
+        ): T = block(ByteReadChannel(readBytes(start, length, priority)))
+
+        override suspend fun readBytes(start: Long, length: Long, priority: Int): ByteArray {
+            val now = inFlight.incrementAndGet()
+            peak.update { maxOf(it, now) }
+            try {
+                delay(20.milliseconds)
+                val from = start.toInt()
+                return content.copyOfRange(from, minOf(content.size, from + length.toInt()))
+            } finally {
+                inFlight.decrementAndGet()
+            }
+        }
+    }
+
+    private fun newProbedFetcher(dir: SystemPath, pieces: MutablePieceList, scheduler: DownloadScheduler, probe: ConcurrencyProbe) =
+        PieceFetcher(
+            source = probe,
+            file = dir.resolve("probed.mkv"),
+            pieces = pieces,
+            totalLength = totalLength,
+            concurrency = 8,
+            logTag = "probed",
+            onPieceDownloaded = {},
+            parentCoroutineContext = Dispatchers.IO_,
+            slot = scheduler.newSlot("probed"),
+            streaming = scheduler.streaming,
+            maxRequestBytes = pieceSize,
+        )
+
+    @Test
+    fun `a download keeps few workers while a stream is open`() = runBlocking {
+        val dir = SystemPaths.createTempDirectory("pikpak-scheduler-throttle")
+        val scheduler = DownloadScheduler(limit = 2)
+        val wanted = (0 until pieceCount).toList()
+
+        val playingSlot = scheduler.newSlot("playing")
+        playingSlot.openStream()
+
+        val probe = ConcurrencyProbe(content)
+        val fetcher = newProbedFetcher(dir, newPieces(), scheduler, probe)
+        fetcher.start()
+        fetcher.downloadOnly(emptyList(), wanted)
+
+        awaitComplete(fetcher)
+        fetcher.close()
+        playingSlot.closeStream()
+        assertTrue(
+            probe.peak.value <= PieceFetcher.WORKERS_WHILE_STREAMING,
+            "peak in-flight ${probe.peak.value} while a stream was open",
+        )
+    }
+
+    @Test
+    fun `a download brings its workers back once the stream closes`() = runBlocking {
+        val dir = SystemPaths.createTempDirectory("pikpak-scheduler-unthrottle")
+        val scheduler = DownloadScheduler(limit = 2)
+        val wanted = (0 until pieceCount).toList()
+
+        val playingSlot = scheduler.newSlot("playing")
+        playingSlot.openStream()
+
+        val probe = ConcurrencyProbe(content)
+        val fetcher = newProbedFetcher(dir, newPieces(), scheduler, probe)
+        fetcher.start()
+        fetcher.downloadOnly(emptyList(), wanted)
+
+        withTimeout(30.seconds) {
+            while (fetcher.downloadedBytes < 4 * pieceSize) delay(10.milliseconds)
+        }
+        assertTrue(probe.peak.value <= PieceFetcher.WORKERS_WHILE_STREAMING)
+        playingSlot.closeStream()
+
+        awaitComplete(fetcher)
+        fetcher.close()
+        assertTrue(
+            probe.peak.value > PieceFetcher.WORKERS_WHILE_STREAMING,
+            "peak in-flight stayed at ${probe.peak.value} after the stream closed",
+        )
     }
 }

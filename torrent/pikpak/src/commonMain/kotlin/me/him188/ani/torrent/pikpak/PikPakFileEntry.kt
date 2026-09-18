@@ -304,6 +304,7 @@ internal class PikPakFileEntry(
             onPieceDownloaded = { controller?.onPieceDownloaded(it) },
             parentCoroutineContext = streamContext,
             slot = slot,
+            streaming = slot.streaming,
         )
         return Stream(
             pieces = pieces,

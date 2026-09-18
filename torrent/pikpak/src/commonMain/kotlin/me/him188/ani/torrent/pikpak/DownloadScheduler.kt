@@ -12,6 +12,8 @@ package me.him188.ani.torrent.pikpak
 import kotlinx.atomicfu.locks.SynchronizedObject
 import kotlinx.atomicfu.locks.synchronized
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import me.him188.ani.utils.logging.info
@@ -31,10 +33,17 @@ internal class DownloadScheduler(
 
     private val version = MutableStateFlow(0L)
 
+    private val _streaming = MutableStateFlow(false)
+
+    /** Whether any file has a playback stream open. Fetchers throttle themselves on it. */
+    val streaming: StateFlow<Boolean> = _streaming.asStateFlow()
+
     fun newSlot(name: String): Slot = Slot(name)
 
     inner class Slot internal constructor(private val name: String) {
         private var streams = 0
+
+        val streaming: StateFlow<Boolean> get() = this@DownloadScheduler.streaming
 
         suspend fun awaitTurn() {
             var deferred = false
@@ -107,6 +116,7 @@ internal class DownloadScheduler(
     }
 
     private fun bump() {
+        _streaming.value = synchronized(lock) { playing.isNotEmpty() }
         version.update { it + 1 }
     }
 

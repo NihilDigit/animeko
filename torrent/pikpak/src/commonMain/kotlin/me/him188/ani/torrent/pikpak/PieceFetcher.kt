@@ -71,6 +71,8 @@ internal class PieceFetcher(
     private val onPieceDownloaded: (pieceIndex: Int) -> Unit,
     parentCoroutineContext: CoroutineContext,
     private val slot: DownloadScheduler.Slot? = null,
+    // True while any file on the engine has a playback stream open; see WORKERS_WHILE_STREAMING.
+    private val streaming: StateFlow<Boolean> = MutableStateFlow(false),
     private val retryDelay: Duration = RETRY_BACKOFF_AFTER_FAILURES,
     private val maxRequestBytes: Long = DEFAULT_MAX_REQUEST_BYTES,
     private val persistInterval: Duration = PERSIST_INTERVAL,
@@ -173,7 +175,7 @@ internal class PieceFetcher(
                     try {
                         coroutineScope {
                             launch { flushLoop() }
-                            repeat(concurrency) { launch { worker(idleWorkers) } }
+                            repeat(concurrency) { index -> launch { worker(index, idleWorkers) } }
                         }
                     } finally {
                         slot?.leave()
@@ -230,9 +232,15 @@ internal class PieceFetcher(
         Unit
     }
 
-    private suspend fun worker(idleWorkers: AtomicInt) {
+    private suspend fun worker(index: Int, idleWorkers: AtomicInt) {
         while (currentCoroutineContext().isActive) {
             try {
+                // Workers above the cap park until the cap rises again; a parked worker is idle for
+                // the scheduler slot like any other, so a fully parked fetcher hands the slot on.
+                if (index >= activeWorkers()) {
+                    whileIdle(idleWorkers) { streaming.first { index < activeWorkers() } }
+                    continue
+                }
                 val generation = workGeneration.value
                 val batch = claimBatch()
                 if (batch == null) {
@@ -261,6 +269,8 @@ internal class PieceFetcher(
             }
         }
     }
+
+    private fun activeWorkers(): Int = if (streaming.value) minOf(concurrency, WORKERS_WHILE_STREAMING) else concurrency
 
     // The slot belongs to the fetcher, not to a worker, so it is released only on the all-idle edge.
     private suspend fun whileIdle(idleWorkers: AtomicInt, block: suspend () -> Unit) {
@@ -375,7 +385,7 @@ internal class PieceFetcher(
         val pieceIndices: List<Int>,
     )
 
-    private companion object {
+    internal companion object {
         // How often the data file is fsynced and the bitmap written. It bounds how much recent
         // progress a crash throws away; the bytes themselves stay on disk, only the record of them
         // is lost, so the pieces are simply fetched again.
@@ -392,6 +402,17 @@ internal class PieceFetcher(
         // saturated 50 Mbit/s link and playback was measured stalling just over three seconds;
         // holding it to a single piece brought the worst wait under a second.
         const val DEFAULT_MAX_REQUEST_BYTES: Long = PikPakFileEntry.PIECE_SIZE
+
+        // Workers kept running while a playback stream is open anywhere on the account.
+        //
+        // Bounding the request size (above) bounds how long one cache request holds a slot, but not
+        // how many slots the cache holds: with the playback read-ahead window full the stream holds
+        // none, the cache takes all eight, and the next playback read queues behind eight in-flight
+        // requests. On a weak link one 512 KiB request runs 1.5 s, and playback was measured waiting
+        // 0.4 to 2.6 s per read while a background download ran. Two workers leave six slots that
+        // playback finds free the moment it needs them; the cache keeps a third of the link, which
+        // is plenty on a good one and the right share on a weak one.
+        const val WORKERS_WHILE_STREAMING = 2
     }
 }
 
