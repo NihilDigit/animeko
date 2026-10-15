@@ -19,6 +19,7 @@ import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
@@ -75,6 +76,7 @@ internal class PikPakFileEntry(
     kept: Boolean = false,
     /** Records whether the file is kept, so a restart knows; see [kept]. */
     private val persistKept: suspend (kept: Boolean) -> Unit = {},
+    private val downloadLimiter: PikPakDownloadLimiter,
 ) : AbstractTorrentFileEntry(
     index = index,
     length = length,
@@ -248,9 +250,20 @@ internal class PikPakFileEntry(
         while (!stream.store.isComplete) {
             var cache: PikPakFileCache? = null
             try {
-                ensureCloudReady()
-                cache = openCache()
-                cache.download(downloadOrder()).await()
+                downloadLimiter.withSlot {
+                    if (!stream.store.isComplete) {
+                        ensureCloudReady()
+                        val activeCache = openCache().also { cache = it }
+                        val download = activeCache.download(downloadOrder())
+                        try {
+                            download.await()
+                        } finally {
+                            // SDK downloads outlive their caller unless explicitly cancelled.
+                            // Release the slot only after the old download has stopped.
+                            withContext(NonCancellable) { download.cancelAndJoin() }
+                        }
+                    }
+                }
             } catch (e: CancellationException) {
                 // Our own cancellation ends the loop. Otherwise the cache was closed under the
                 // download, by an account switch or a delete, and the next pass opens the new one.

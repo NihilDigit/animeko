@@ -18,6 +18,8 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.job
 import kotlinx.coroutines.sync.Mutex
@@ -153,6 +155,7 @@ class PikPakEngine(
                     sessionStore = sessionStore,
                     rootDataDirectory = saveDir,
                     parentCoroutineContext = scope.coroutineContext,
+                    maxConcurrentDownloads = config.map { it.effectiveMaxConcurrentDownloads }.distinctUntilChanged(),
                     onNotEnoughSpace = { _notEnoughSpace.tryEmit(it) },
                 ).also { created ->
                     downloader = created

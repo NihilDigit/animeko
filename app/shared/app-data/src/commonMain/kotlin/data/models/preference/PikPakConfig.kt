@@ -16,6 +16,7 @@ import kotlinx.serialization.descriptors.PrimitiveSerialDescriptor
 import kotlinx.serialization.descriptors.SerialDescriptor
 import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
+import me.him188.ani.torrent.pikpak.PikPakEngineConfig
 import me.him188.ani.utils.io.obscure
 import me.him188.ani.utils.io.tryReveal
 
@@ -45,14 +46,19 @@ data class PikPakConfig(
     @Serializable(with = ObscuredStringSerializer::class)
     val refreshToken: String = "",
     val legacyNoticeAnswered: Boolean = false,
+    val maxConcurrentDownloads: Int = PikPakEngineConfig.DEFAULT_MAX_CONCURRENT_DOWNLOADS,
 ) {
+    val effectiveMaxConcurrentDownloads: Int
+        get() = maxConcurrentDownloads.coerceIn(1, PikPakEngineConfig.MAX_CONCURRENT_DOWNLOADS)
+
     override fun toString(): String {
         return "PikPakConfig(enabled=$enabled, username=$username, password.hash=${password.hashCode()}, " +
                 "refreshToken.hash=${refreshToken.let { if (it.isNotEmpty()) it.hashCode() else "" }}, " +
-                "legacyNoticeAnswered=$legacyNoticeAnswered)"
+                "legacyNoticeAnswered=$legacyNoticeAnswered, maxConcurrentDownloads=$maxConcurrentDownloads)"
     }
 
     companion object {
+        val MaxConcurrentDownloadsOptions = (1..PikPakEngineConfig.MAX_CONCURRENT_DOWNLOADS).toList()
         val Default = PikPakConfig()
     }
 }

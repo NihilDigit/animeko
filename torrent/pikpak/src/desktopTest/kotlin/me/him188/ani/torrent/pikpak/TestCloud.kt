@@ -18,6 +18,8 @@ import io.github.nihildigit.pikpak.fileCache
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import me.him188.ani.utils.io.SystemPath
@@ -94,6 +96,7 @@ internal fun testEntry(
     onHandleCountChanged: suspend () -> Unit = {},
     kept: Boolean = false,
     persistKept: suspend (Boolean) -> Unit = {},
+    downloadLimiter: PikPakDownloadLimiter = PikPakDownloadLimiter(flowOf(3), CoroutineScope(Dispatchers.IO)),
 ) = PikPakFileEntry(
     index = 0,
     length = length,
@@ -108,4 +111,5 @@ internal fun testEntry(
     onHandleCountChanged = onHandleCountChanged,
     kept = kept,
     persistKept = persistKept,
+    downloadLimiter = downloadLimiter,
 )

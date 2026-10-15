@@ -54,6 +54,8 @@
     <string name="settings_tab_bt">BitTorrent</string>
     <string name="settings_pikpak_description">Resolve BitTorrent magnets through PikPak’s cloud offline servers for faster playback. Premium subscription is required.\nThe anitorrent settings above do not apply to PikPak.</string>
     <string name="settings_pikpak_enabled">Enable PikPak</string>
+    <string name="settings_pikpak_max_concurrent_downloads">Simultaneous downloads</string>
+    <string name="settings_pikpak_max_concurrent_downloads_description">Maximum number of files downloaded through PikPak at once. Playback is excluded. Reducing this number lets active downloads finish before starting more.</string>
     <string name="settings_pikpak_username">Username</string>
     <string name="settings_pikpak_username_placeholder">Email or phone</string>
     <string name="settings_pikpak_password">Password</string>

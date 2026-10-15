@@ -34,6 +34,8 @@ import me.him188.ani.app.ui.lang.settings_pikpak_drive_usage_signed_out
 import me.him188.ani.app.ui.lang.settings_pikpak_drive_usage_title
 import me.him188.ani.app.ui.lang.settings_pikpak_drive_usage_value
 import me.him188.ani.app.ui.lang.settings_pikpak_enabled
+import me.him188.ani.app.ui.lang.settings_pikpak_max_concurrent_downloads
+import me.him188.ani.app.ui.lang.settings_pikpak_max_concurrent_downloads_description
 import me.him188.ani.app.ui.lang.settings_pikpak_legacy_delete
 import me.him188.ani.app.ui.lang.settings_pikpak_legacy_failed
 import me.him188.ani.app.ui.lang.settings_pikpak_legacy_keep
@@ -51,6 +53,7 @@ import me.him188.ani.app.ui.lang.settings_pikpak_username_placeholder
 import me.him188.ani.app.ui.settings.framework.ConnectionTesterResultIndicator
 import me.him188.ani.app.ui.settings.framework.SettingsState
 import me.him188.ani.app.ui.settings.framework.components.SettingsScope
+import me.him188.ani.app.ui.settings.framework.components.DropdownItem
 import me.him188.ani.app.ui.settings.framework.components.SwitchItem
 import me.him188.ani.app.ui.settings.framework.components.TextFieldItem
 import me.him188.ani.app.ui.settings.framework.components.TextItem
@@ -159,6 +162,15 @@ internal fun SettingsScope.PikPakAcceleratorGroup(
                             )
                         }
                     },
+                )
+
+                DropdownItem(
+                    selected = { config.effectiveMaxConcurrentDownloads },
+                    values = { PikPakConfig.MaxConcurrentDownloadsOptions },
+                    itemText = { Text(it.toString()) },
+                    onSelect = { state.update(config.copy(maxConcurrentDownloads = it)) },
+                    title = { Text(stringResource(Lang.settings_pikpak_max_concurrent_downloads)) },
+                    description = { Text(stringResource(Lang.settings_pikpak_max_concurrent_downloads_description)) },
                 )
 
                 PikPakDriveUsageItems(driveUsageState)

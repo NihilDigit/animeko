@@ -36,6 +36,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -76,11 +77,13 @@ class PikPakTorrentDownloader(
     private val rootDataDirectory: SystemPath,
     private val config: PikPakEngineConfig = PikPakEngineConfig(),
     parentCoroutineContext: CoroutineContext,
+    maxConcurrentDownloads: Flow<Int> = flowOf(PikPakEngineConfig.DEFAULT_MAX_CONCURRENT_DOWNLOADS),
     /** A file could not be leased for want of drive space; see [PikPakNotEnoughSpaceException]. */
     private val onNotEnoughSpace: (PikPakNotEnoughSpaceException) -> Unit = {},
 ) : TorrentDownloader {
     private val logger = logger<PikPakTorrentDownloader>()
     private val scope = CoroutineScope(parentCoroutineContext + SupervisorJob(parentCoroutineContext[Job]))
+    private val downloadLimiter = PikPakDownloadLimiter(maxConcurrentDownloads, scope)
 
     // Closing sessions has to outlive this downloader: close() cancels scope, and the stores' last
     // bitmap write would go down with it. Deliberately parentless, so cancelling scope cannot reach it.
@@ -90,7 +93,7 @@ class PikPakTorrentDownloader(
     // covers connection setup and response headers without aborting a request that is still making
     // progress. config() keeps the SDK's tuned connection pool.
     private val cdnClientHolder = lazy {
-        PikPakClient.tunedCdnClient().config {
+        PikPakClient.tunedCdnClient(perHostLimit = config.accountConcurrency).config {
             install(HttpTimeout) {
                 socketTimeoutMillis = CDN_SOCKET_TIMEOUT.inWholeMilliseconds
                 // A range request is free to take as long as it needs while bytes keep arriving.
@@ -480,6 +483,7 @@ class PikPakTorrentDownloader(
             onHandleCountChanged = onHandleCountChanged,
             kept = kept,
             persistKept = persistKept,
+            downloadLimiter = downloadLimiter,
         )
     }
 
@@ -546,9 +550,6 @@ class PikPakTorrentDownloader(
             httpClient = httpClient,
             cdnHttpClient = cdnClient,
             connectionBudget = config.effectiveConcurrency,
-            // Two files' worth, so a cache download and playback each keep a full link's budget.
-            // The CDN client admits as many per host (tunedCdnClient's default); an engine cap below
-            // the gates would queue requests where RangeReader reads the wait as a dead host.
             accountConnectionBudget = config.accountConcurrency,
         ).let { PikPakAccount(it, scope, onNotEnoughSpace) }.also { clientEntry = creds to it }
     }
@@ -572,13 +573,15 @@ data class PikPakEngineConfig(
     companion object {
         // PikPak rejects a ninth simultaneous connection to the same signed URL.
         const val MAX_CONCURRENCY: Int = 8
+        const val DEFAULT_MAX_CONCURRENT_DOWNLOADS: Int = 3
+        const val MAX_CONCURRENT_DOWNLOADS: Int = 16
     }
 
     val effectiveConcurrency: Int get() = concurrency.coerceIn(1, MAX_CONCURRENCY)
 
-    // Lowering the per-file count is how a slow line is accommodated, and the account-wide count
-    // has to come down with it: past what the line carries, more connections only make each slower.
-    val accountConcurrency: Int get() = effectiveConcurrency * 2
+    // The file limiter controls active downloads. Reserve enough connections for its largest
+    // setting plus playback, so increasing the setting does not require replacing live clients.
+    val accountConcurrency: Int get() = effectiveConcurrency * (MAX_CONCURRENT_DOWNLOADS + 1)
 }
 
 data class PikPakCredentials(

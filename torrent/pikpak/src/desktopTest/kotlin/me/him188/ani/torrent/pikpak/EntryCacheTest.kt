@@ -10,6 +10,11 @@
 package me.him188.ani.torrent.pikpak
 
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -24,6 +29,7 @@ import me.him188.ani.utils.io.resolve
 import me.him188.ani.utils.io.writeBytes
 import org.openani.mediamp.io.SeekableInput
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
@@ -44,6 +50,51 @@ class EntryCacheTest {
     private val block = PikPakFileEntry.PIECE_SIZE
 
     private fun payload(size: Int) = ByteArray(size) { (it * 31 % 251).toByte() }
+
+    @Test
+    fun `queued downloads leave playback available and pausing releases the slot`() = runBlocking {
+        val limiterScope = CoroutineScope(coroutineContext + SupervisorJob())
+        val limiter = PikPakDownloadLimiter(MutableStateFlow(1), limiterScope)
+        val content = payload((block * 4).toInt())
+        val hold = CompletableDeferred<Unit>()
+        val activeReads = AtomicInteger()
+        val firstSource = FakeRangeSource(content, beforeRead = {
+            activeReads.incrementAndGet()
+            try {
+                hold.await()
+            } finally {
+                activeReads.decrementAndGet()
+            }
+        })
+        val secondSource = FakeRangeSource(content)
+        val directory = SystemPaths.createTempDirectory("entry-download-limit")
+        val first = testEntry(directory, "01.mkv", content.size.toLong(), firstSource, downloadLimiter = limiter)
+        val second = testEntry(directory, "02.mkv", content.size.toLong(), secondSource, downloadLimiter = limiter)
+        val playing = testEntry(directory, "03.mkv", content.size.toLong(), FakeRangeSource(content), downloadLimiter = limiter)
+        try {
+            val firstHandle = first.createHandle()
+            val secondHandle = second.createHandle()
+            firstHandle.resume(FilePriority.NORMAL)
+            waitUntil("first download started") { firstSource.requests.isNotEmpty() }
+            secondHandle.resume(FilePriority.NORMAL)
+            playing.createInput(coroutineContext).use { input ->
+                assertContentEquals(content.copyOfRange(0, 16), input.readAt(0, 16))
+            }
+            assertTrue(secondSource.requests.isEmpty(), "queued download used the network")
+            firstHandle.pause()
+            withTimeout(20.seconds) { second.fileStats.first { it.isDownloadFinished } }
+            assertContentEquals(content, entryData(second))
+            assertEquals(0, activeReads.get(), "paused download still has active requests")
+            assertFalse(first.isComplete)
+            firstHandle.close()
+            secondHandle.close()
+        } finally {
+            first.close()
+            second.close()
+            playing.close()
+            limiterScope.cancel()
+        }
+    }
 
     private fun SeekableInput.readAt(position: Long, count: Int): ByteArray {
         seekTo(position)

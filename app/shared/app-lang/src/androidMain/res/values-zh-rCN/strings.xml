@@ -54,6 +54,8 @@
     <string name="settings_tab_bt">BitTorrent</string>
     <string name="settings_pikpak_description">使用 PikPak 解析 BT 种子可以改善解析速度，需要订阅 PikPak 会员。\n上方 anitorrent 设置对 PikPak 解析无效。</string>
     <string name="settings_pikpak_enabled">启用 PikPak</string>
+    <string name="settings_pikpak_max_concurrent_downloads">同时下载数</string>
+    <string name="settings_pikpak_max_concurrent_downloads_description">通过 PikPak 同时下载的文件数，不含播放。调低后，正在下载的文件会继续完成，再按新的数量启动下载。</string>
     <string name="settings_pikpak_username">用户名</string>
     <string name="settings_pikpak_username_placeholder">邮箱 / 手机号</string>
     <string name="settings_pikpak_password">密码</string>

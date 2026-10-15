@@ -17,6 +17,7 @@ import kotlinx.atomicfu.locks.synchronized
 internal class FakeRangeSource(
     private val content: ByteArray,
     failFirstReads: Int = 0,
+    private val beforeRead: suspend () -> Unit = {},
 ) : RangeSource {
     data class Request(val start: Long, val length: Long)
 
@@ -44,6 +45,7 @@ internal class FakeRangeSource(
             }
         }
         if (down) throw IllegalStateException("simulated outage at $start")
+        beforeRead()
         val end = minOf(content.size.toLong(), start + length).toInt()
         return content.copyOfRange(start.toInt(), end)
     }
