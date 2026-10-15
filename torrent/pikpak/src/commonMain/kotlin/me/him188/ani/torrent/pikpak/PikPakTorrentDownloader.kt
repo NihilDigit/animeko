@@ -554,7 +554,7 @@ class PikPakTorrentDownloader(
     }
 
     private companion object {
-        const val SDK_VERSION = "2.0.0"
+        const val SDK_VERSION = "2.1.0"
 
         // A backstop, not the body watchdog -- RangeReader owns that. It also bounds the wait for
         // response headers and connection setup.
